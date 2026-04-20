@@ -289,9 +289,16 @@ Database size: 12.4 MB
 
 For deeper analytics — token usage, cost estimates, tool breakdown, and activity patterns — use [`hermes insights`](/docs/reference/cli-commands#hermes-insights).
 
-## Session Search Tool
+## Session Recall Tools
 
-The agent has a built-in `session_search` tool that performs full-text search across all past conversations using SQLite's FTS5 engine.
+The agent has two built-in recall tools for past conversations:
+
+- `session_search` for topic/keyword-driven recall across all sessions.
+- `session_recap` for time-window recap (for example, "yesterday" or "last 24h").
+
+### `session_search`
+
+`session_search` performs full-text search across past conversations using SQLite's FTS5 engine.
 
 ### How It Works
 
@@ -310,11 +317,22 @@ The search supports standard FTS5 query syntax:
 - Boolean: `docker OR kubernetes`, `python NOT java`
 - Prefix: `deploy*`
 
-### When It's Used
+### `session_recap`
 
-The agent is prompted to use session search automatically:
+`session_recap` summarizes messages that occurred within a specified time window.
 
-> *"When the user references something from a past conversation or you suspect relevant prior context exists, use session_search to recall it before asking them to repeat themselves."*
+How it works:
+
+1. Parses `window_start` / `window_end` (ISO datetime or epoch seconds)
+2. Finds sessions with messages in that inclusive window
+3. Groups related child sessions under parent lineage for cleaner recap
+4. Summarizes in-window content per selected session
+
+### When They're Used
+
+The agent is prompted to use recall tools automatically:
+
+> *"When the user references something from a past conversation or you suspect relevant prior context exists, use session_search for topic/keyword recall or session_recap for time-window recap before asking them to repeat themselves."*
 
 ## Per-Platform Session Tracking
 

@@ -42,11 +42,14 @@ class TestGuidanceConstants:
         assert "durable facts" in MEMORY_GUIDANCE
         assert "Do NOT save task progress" in MEMORY_GUIDANCE
         assert "session_search" in MEMORY_GUIDANCE
+        assert "session_recap" in MEMORY_GUIDANCE
         assert "like a diary" not in MEMORY_GUIDANCE
         assert ">80%" not in MEMORY_GUIDANCE
 
-    def test_session_search_guidance_is_simple_cross_session_recall(self):
+    def test_session_search_guidance_routes_to_both_recall_tools(self):
         assert "relevant cross-session context exists" in SESSION_SEARCH_GUIDANCE
+        assert "session_search" in SESSION_SEARCH_GUIDANCE
+        assert "session_recap" in SESSION_SEARCH_GUIDANCE
         assert "recent turns of the current session" not in SESSION_SEARCH_GUIDANCE
 
 

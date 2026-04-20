@@ -67,7 +67,8 @@ Or in-session:
 | `moa` | `mixture_of_agents` | Multi-model consensus via Mixture of Agents. |
 | `rl` | `rl_check_status`, `rl_edit_config`, `rl_get_current_config`, `rl_get_results`, `rl_list_environments`, `rl_list_runs`, `rl_select_environment`, `rl_start_training`, `rl_stop_training`, `rl_test_inference` | RL training environment management (Atropos). |
 | `search` | `web_search` | Web search only (without extract). |
-| `session_search` | `session_search` | Search past conversation sessions. |
+| `session_recap` | `session_recap` | Search past conversation sessions by time window. |
+| `session_search` | `session_search` | Search past conversation sessions by query (or browse recent sessions). |
 | `skills` | `skill_manage`, `skill_view`, `skills_list` | Skill CRUD and browsing. |
 | `terminal` | `process`, `terminal` | Shell command execution and background process management. |
 | `todo` | `todo` | Task list management within a session. |

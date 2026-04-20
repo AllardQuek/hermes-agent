@@ -165,7 +165,7 @@ Hermes uses separate lightweight models for side tasks. Each task has its own pr
 | Vision | Image analysis, browser screenshots | `auxiliary.vision` |
 | Web Extract | Web page summarization | `auxiliary.web_extract` |
 | Compression | Context compression summaries | `auxiliary.compression` |
-| Session Search | Past session summarization | `auxiliary.session_search` |
+| Session Recall (Search + Recap) | Past session summarization | `auxiliary.session_search` |
 | Skills Hub | Skill search and discovery | `auxiliary.skills_hub` |
 | MCP | MCP helper operations | `auxiliary.mcp` |
 | Memory Flush | Memory consolidation | `auxiliary.flush_memories` |
@@ -362,7 +362,7 @@ See [Scheduled Tasks (Cron)](/docs/user-guide/features/cron) for full configurat
 | Vision | Auto-detection chain + internal OpenRouter retry | `auxiliary.vision` |
 | Web extraction | Auto-detection chain + internal OpenRouter retry | `auxiliary.web_extract` |
 | Context compression | Auto-detection chain, degrades to no-summary if unavailable | `auxiliary.compression` |
-| Session search | Auto-detection chain | `auxiliary.session_search` |
+| Session recall (search + recap) | Auto-detection chain | `auxiliary.session_search` |
 | Skills hub | Auto-detection chain | `auxiliary.skills_hub` |
 | MCP helpers | Auto-detection chain | `auxiliary.mcp` |
 | Memory flush | Auto-detection chain | `auxiliary.flush_memories` |

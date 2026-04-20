@@ -140,6 +140,12 @@ Scoped to the Feishu document-comment handler. Drives comment read/write operati
 |------|-------------|----------------------|
 | `session_search` | Search your long-term memory of past conversations. This is your recall -- every past session is searchable, and this tool summarizes what happened. USE THIS PROACTIVELY when: - The user says 'we did this before', 'remember when', 'last ti… | — |
 
+## `session_recap` toolset
+
+| Tool | Description | Requires environment |
+|------|-------------|----------------------|
+| `session_recap` | Recap cross-session activity within a time window (for example: yesterday, last 24h, between two timestamps). This is optimized for chronological recap rather than keyword retrieval. | — |
+
 ## `skills` toolset
 
 | Tool | Description | Requires environment |

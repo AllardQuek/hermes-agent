@@ -25,7 +25,7 @@ High-level categories:
 | **Browser** | `browser_navigate`, `browser_snapshot`, `browser_vision` | Interactive browser automation with text and vision support. |
 | **Media** | `vision_analyze`, `image_generate`, `text_to_speech` | Multimodal analysis and generation. |
 | **Agent orchestration** | `todo`, `clarify`, `execute_code`, `delegate_task` | Planning, clarification, code execution, and subagent delegation. |
-| **Memory & recall** | `memory`, `session_search` | Persistent memory and session search. |
+| **Memory & recall** | `memory`, `session_search`, `session_recap` | Persistent memory and session recall (keyword and time-window). |
 | **Automation & delivery** | `cronjob`, `send_message` | Scheduled tasks with create/list/update/pause/resume/run/remove actions, plus outbound messaging delivery. |
 | **Integrations** | `ha_*`, MCP server tools, `rl_*` | Home Assistant, MCP, RL training, and other integrations. |
 
@@ -48,7 +48,7 @@ hermes tools
 hermes tools
 ```
 
-Common toolsets include `web`, `terminal`, `file`, `browser`, `vision`, `image_gen`, `moa`, `skills`, `tts`, `todo`, `memory`, `session_search`, `cronjob`, `code_execution`, `delegation`, `clarify`, `homeassistant`, and `rl`.
+Common toolsets include `web`, `terminal`, `file`, `browser`, `vision`, `image_gen`, `moa`, `skills`, `tts`, `todo`, `memory`, `session_search`, `session_recap`, `cronjob`, `code_execution`, `delegation`, `clarify`, `homeassistant`, and `rl`.
 
 See [Toolsets Reference](/docs/reference/toolsets-reference) for the full set, including platform presets such as `hermes-cli`, `hermes-telegram`, and dynamic MCP toolsets like `mcp-<server>`.
 

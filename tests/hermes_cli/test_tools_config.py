@@ -26,6 +26,9 @@ def test_get_platform_tools_uses_default_when_platform_not_configured():
 def test_configurable_toolsets_include_messaging():
     assert any(ts_key == "messaging" for ts_key, _, _ in CONFIGURABLE_TOOLSETS)
 
+def test_configurable_toolsets_include_session_recap():
+    assert any(ts_key == "session_recap" for ts_key, _, _ in CONFIGURABLE_TOOLSETS)
+
 def test_get_platform_tools_default_telegram_includes_messaging():
     enabled = _get_platform_tools({}, "telegram")
 

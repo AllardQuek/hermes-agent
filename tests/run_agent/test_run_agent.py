@@ -86,6 +86,28 @@ def agent_with_memory_tool():
         return a
 
 
+@pytest.fixture()
+def agent_with_session_recap_tool():
+    """Agent whose valid_tool_names includes only recap-style recall tool."""
+    with (
+        patch(
+            "run_agent.get_tool_definitions",
+            return_value=_make_tool_defs("web_search", "session_recap"),
+        ),
+        patch("run_agent.check_toolset_requirements", return_value={}),
+        patch("run_agent.OpenAI"),
+    ):
+        a = AIAgent(
+            api_key="test-k...7890",
+            base_url="https://openrouter.ai/api/v1",
+            quiet_mode=True,
+            skip_context_files=True,
+            skip_memory=True,
+        )
+        a.client = MagicMock()
+        return a
+
+
 def test_aiagent_reuses_existing_errors_log_handler():
     """Repeated AIAgent init should not accumulate duplicate errors.log handlers."""
     root_logger = logging.getLogger()
@@ -724,6 +746,18 @@ class TestBuildSystemPrompt:
         prompt = agent._build_system_prompt()
         assert MEMORY_GUIDANCE not in prompt
 
+    def test_session_recall_guidance_when_recap_tool_loaded(self, agent_with_session_recap_tool):
+        from agent.prompt_builder import SESSION_SEARCH_GUIDANCE
+
+        prompt = agent_with_session_recap_tool._build_system_prompt()
+        assert SESSION_SEARCH_GUIDANCE in prompt
+
+    def test_no_session_recall_guidance_without_recall_tools(self, agent):
+        from agent.prompt_builder import SESSION_SEARCH_GUIDANCE
+
+        prompt = agent._build_system_prompt()
+        assert SESSION_SEARCH_GUIDANCE not in prompt
+
     def test_includes_datetime(self, agent):
         prompt = agent._build_system_prompt()
         # Should contain current date info like "Conversation started:"
@@ -807,6 +841,13 @@ class TestToolUseEnforcementConfig:
         agent = self._make_agent(model="openai/codex-mini", tool_use_enforcement="auto")
         prompt = agent._build_system_prompt()
         assert TOOL_USE_ENFORCEMENT_GUIDANCE in prompt
+
+    def test_auto_injects_for_mimo(self):
+        from agent.prompt_builder import TOOL_USE_ENFORCEMENT_GUIDANCE
+        agent = self._make_agent(model="xiaomi/mimo-v2-pro", tool_use_enforcement="auto")
+        prompt = agent._build_system_prompt()
+        assert TOOL_USE_ENFORCEMENT_GUIDANCE in prompt
+
 
     def test_auto_skips_for_claude(self):
         from agent.prompt_builder import TOOL_USE_ENFORCEMENT_GUIDANCE
@@ -896,6 +937,22 @@ class TestToolUseEnforcementConfig:
             assert TOOL_USE_ENFORCEMENT_GUIDANCE not in prompt
 
 
+class TestIntermediateAckDetection:
+    def test_detects_session_recap_ack_as_intermediate(self, agent_with_session_recap_tool):
+        assert agent_with_session_recap_tool._looks_like_codex_intermediate_ack(
+            user_message="what we discussed from 4-5pm",
+            assistant_content="Let me pull up that recap for you.",
+            messages=[{"role": "user", "content": "what we discussed from 4-5pm"}],
+        )
+
+    def test_does_not_flag_recap_final_answer(self, agent_with_session_recap_tool):
+        assert not agent_with_session_recap_tool._looks_like_codex_intermediate_ack(
+            user_message="what we discussed from 4-5pm",
+            assistant_content="No conversation data exists for that 4-5pm window.",
+            messages=[{"role": "user", "content": "what we discussed from 4-5pm"}],
+        )
+
+
 class TestInvalidateSystemPrompt:
     def test_clears_cache(self, agent):
         agent._cached_system_prompt = "cached value"
@@ -983,6 +1040,13 @@ class TestBuildApiKwargs:
     def test_reasoning_sent_for_supported_openrouter_model(self, agent):
         agent.base_url = "https://openrouter.ai/api/v1"
         agent.model = "qwen/qwen3.5-plus-02-15"
+        messages = [{"role": "user", "content": "hi"}]
+        kwargs = agent._build_api_kwargs(messages)
+        assert kwargs["extra_body"]["reasoning"]["effort"] == "medium"
+
+    def test_reasoning_sent_for_xiaomi_openrouter_model(self, agent):
+        agent.base_url = "https://openrouter.ai/api/v1"
+        agent.model = "xiaomi/mimo-v2-pro"
         messages = [{"role": "user", "content": "hi"}]
         kwargs = agent._build_api_kwargs(messages)
         assert kwargs["extra_body"]["reasoning"]["effort"] == "medium"
@@ -1675,6 +1739,46 @@ class TestConcurrentToolExecution:
             mock_todo.assert_called_once()
         assert "ok" in result
 
+    def test_invoke_tool_session_recap_injects_db_and_session(self, agent):
+        """session_recap should receive DB + current_session_id from agent context."""
+        agent._session_db = object()
+        with patch("tools.session_recap_tool.session_recap", return_value='{"success":true}') as mock_recap:
+            result = agent._invoke_tool(
+                "session_recap",
+                {
+                    "window_start": "2026-04-19T00:00:00",
+                    "window_end": "2026-04-19T23:59:59",
+                    "recap_focus": "today",
+                    "include_current": True,
+                    "limit": 2,
+                },
+                "task-1",
+            )
+
+        mock_recap.assert_called_once_with(
+            window_start="2026-04-19T00:00:00",
+            window_end="2026-04-19T23:59:59",
+            recap_focus="today",
+            include_current=True,
+            limit=2,
+            db=agent._session_db,
+            current_session_id=agent.session_id,
+        )
+        assert json.loads(result) == {"success": True}
+
+    def test_invoke_tool_session_recap_without_db_returns_error(self, agent):
+        """session_recap should fail fast when session DB is not initialized."""
+        agent._session_db = None
+        result = agent._invoke_tool(
+            "session_recap",
+            {"window_start": "2026-04-19T00:00:00", "window_end": "2026-04-19T23:59:59"},
+            "task-1",
+        )
+
+        payload = json.loads(result)
+        assert payload["success"] is False
+        assert "Session database not available" in payload["error"]
+
     def test_invoke_tool_blocked_returns_error_and_skips_execution(self, agent, monkeypatch):
         """_invoke_tool should return error JSON when a plugin blocks the tool."""
         monkeypatch.setattr(
@@ -2061,6 +2165,59 @@ class TestRunConversation:
         for i in range(len(roles) - 1):
             if roles[i] == "assistant" and roles[i + 1] == "assistant":
                 raise AssertionError("Consecutive assistant messages found in history")
+
+    def test_reasoning_only_prefill_exhausted_forces_structured_tool_retry(
+        self, agent_with_session_recap_tool
+    ):
+        """After prefill exhaustion, reasoning-intent with no tool call gets one explicit tool-call nudge."""
+        agent = agent_with_session_recap_tool
+        self._setup_agent(agent)
+
+        empty_resp = _mock_response(
+            content=None,
+            finish_reason="stop",
+            reasoning_content=(
+                "The user asked for a recap window. Let me call session_recap "
+                "with the requested range."
+            ),
+        )
+        tool_turn = _mock_response(
+            content="",
+            finish_reason="tool_calls",
+            tool_calls=[_mock_tool_call(name="session_recap", arguments="{}", call_id="sr1")],
+        )
+        final_turn = _mock_response(content="Recap complete.", finish_reason="stop")
+
+        # 1 original + 2 prefill retries + 1 forced-structured retry + final
+        agent.client.chat.completions.create.side_effect = [
+            empty_resp,
+            empty_resp,
+            empty_resp,
+            tool_turn,
+            final_turn,
+        ]
+
+        with (
+            patch("run_agent.handle_function_call", return_value='{"success": true, "summary": "ok"}'),
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("please recap")
+
+        assert result["completed"] is True
+        assert result["final_response"] == "Recap complete."
+        assert result["api_calls"] == 5
+        assert any(
+            msg.get("role") == "user"
+            and "stated intent to call session_recap" in str(msg.get("content", ""))
+            for msg in result["messages"]
+        )
+        assert any(
+            call.kwargs.get("tool_choice", {}).get("function", {}).get("name")
+            == "session_recap"
+            for call in agent.client.chat.completions.create.call_args_list
+        )
 
     def test_truly_empty_response_retries_3_times_then_empty(self, agent):
         """Truly empty response (no content, no reasoning) retries 3 times then falls through to (empty)."""

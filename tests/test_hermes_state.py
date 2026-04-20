@@ -295,6 +295,74 @@ class TestMessageStorage:
 
 
 # =========================================================================
+# Time-window queries
+# =========================================================================
+
+class TestTimeWindowQueries:
+    def test_get_messages_in_time_window_filters_messages(self, db, monkeypatch):
+        db.create_session(session_id="s1", source="cli")
+
+        monkeypatch.setattr("hermes_state.time.time", lambda: 100.0)
+        db.append_message("s1", role="user", content="early")
+        monkeypatch.setattr("hermes_state.time.time", lambda: 200.0)
+        db.append_message("s1", role="assistant", content="middle")
+        monkeypatch.setattr("hermes_state.time.time", lambda: 300.0)
+        db.append_message("s1", role="assistant", content="late")
+
+        msgs = db.get_messages_in_time_window("s1", start_time=150.0, end_time=250.0)
+        assert [m["content"] for m in msgs] == ["middle"]
+
+    def test_get_messages_in_time_window_is_inclusive(self, db, monkeypatch):
+        db.create_session(session_id="s1", source="cli")
+
+        monkeypatch.setattr("hermes_state.time.time", lambda: 100.0)
+        db.append_message("s1", role="user", content="at-start")
+        monkeypatch.setattr("hermes_state.time.time", lambda: 200.0)
+        db.append_message("s1", role="assistant", content="at-end")
+
+        msgs = db.get_messages_in_time_window("s1", start_time=100.0, end_time=200.0)
+        assert [m["content"] for m in msgs] == ["at-start", "at-end"]
+
+    def test_get_messages_in_time_window_swaps_reversed_bounds(self, db, monkeypatch):
+        db.create_session(session_id="s1", source="cli")
+
+        monkeypatch.setattr("hermes_state.time.time", lambda: 150.0)
+        db.append_message("s1", role="user", content="inside")
+
+        msgs = db.get_messages_in_time_window("s1", start_time=200.0, end_time=100.0)
+        assert [m["content"] for m in msgs] == ["inside"]
+
+    def test_list_sessions_with_messages_in_time_window(self, db, monkeypatch):
+        db.create_session(session_id="parent", source="cli")
+        db.create_session(session_id="child", source="cli", parent_session_id="parent")
+        db.create_session(session_id="tool_session", source="tool")
+
+        monkeypatch.setattr("hermes_state.time.time", lambda: 130.0)
+        db.append_message("parent", role="user", content="parent msg")
+        monkeypatch.setattr("hermes_state.time.time", lambda: 150.0)
+        db.append_message("child", role="assistant", content="child msg")
+        monkeypatch.setattr("hermes_state.time.time", lambda: 160.0)
+        db.append_message("tool_session", role="assistant", content="tool msg")
+
+        rows = db.list_sessions_with_messages_in_time_window(
+            start_time=120.0,
+            end_time=200.0,
+            exclude_sources=["tool"],
+            include_children=False,
+        )
+        assert [r["id"] for r in rows] == ["parent"]
+        assert rows[0]["messages_in_window"] == 1
+
+        rows_with_children = db.list_sessions_with_messages_in_time_window(
+            start_time=120.0,
+            end_time=200.0,
+            exclude_sources=["tool"],
+            include_children=True,
+        )
+        assert {r["id"] for r in rows_with_children} == {"parent", "child"}
+
+
+# =========================================================================
 # FTS5 search
 # =========================================================================
 

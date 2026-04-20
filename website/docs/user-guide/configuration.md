@@ -667,7 +667,7 @@ auxiliary:
   compression:
     timeout: 120               # seconds — compression summarizes long conversations, needs more time
 
-  # Session search — summarizes past session matches
+  # Session recall (session_search + session_recap) — summarizes past session matches
   session_search:
     provider: "auto"
     model: ""

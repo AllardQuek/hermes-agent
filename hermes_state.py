@@ -1006,6 +1006,114 @@ class SessionDB:
             result.append(msg)
         return result
 
+    def get_messages_in_time_window(
+        self,
+        session_id: str,
+        start_time: float,
+        end_time: float,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Load messages for a session constrained to an inclusive time window.
+
+        Messages are ordered by ``timestamp`` then ``id`` to keep stable replay
+        order when multiple rows share the same timestamp.
+        """
+        if start_time is None or end_time is None:
+            return []
+
+        if end_time < start_time:
+            start_time, end_time = end_time, start_time
+
+        sql = (
+            "SELECT * FROM messages "
+            "WHERE session_id = ? AND timestamp >= ? AND timestamp <= ? "
+            "ORDER BY timestamp, id"
+        )
+        params: list[Any] = [session_id, float(start_time), float(end_time)]
+
+        if limit is not None:
+            safe_limit = max(0, int(limit))
+            safe_offset = max(0, int(offset))
+            sql += " LIMIT ? OFFSET ?"
+            params.extend([safe_limit, safe_offset])
+
+        with self._lock:
+            cursor = self._conn.execute(sql, params)
+            rows = cursor.fetchall()
+
+        result = []
+        for row in rows:
+            msg = dict(row)
+            if msg.get("tool_calls"):
+                try:
+                    msg["tool_calls"] = json.loads(msg["tool_calls"])
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(
+                        "Failed to deserialize tool_calls in get_messages_in_time_window, falling back to []"
+                    )
+                    msg["tool_calls"] = []
+            result.append(msg)
+        return result
+
+    def list_sessions_with_messages_in_time_window(
+        self,
+        start_time: float,
+        end_time: float,
+        exclude_sources: List[str] = None,
+        include_children: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """List sessions that have at least one message in an inclusive time window.
+
+        Returns session metadata plus:
+        - ``first_in_window``
+        - ``last_in_window``
+        - ``messages_in_window``
+        """
+        if start_time is None or end_time is None:
+            return []
+
+        if end_time < start_time:
+            start_time, end_time = end_time, start_time
+
+        where_clauses = ["m.timestamp >= ?", "m.timestamp <= ?"]
+        params: list[Any] = [float(start_time), float(end_time)]
+
+        if not include_children:
+            where_clauses.append("s.parent_session_id IS NULL")
+
+        if exclude_sources:
+            placeholders = ",".join("?" for _ in exclude_sources)
+            where_clauses.append(f"s.source NOT IN ({placeholders})")
+            params.extend(exclude_sources)
+
+        where_sql = " AND ".join(where_clauses)
+        safe_limit = max(1, int(limit))
+        safe_offset = max(0, int(offset))
+        params.extend([safe_limit, safe_offset])
+
+        sql = f"""
+            SELECT
+                s.*,
+                MIN(m.timestamp) AS first_in_window,
+                MAX(m.timestamp) AS last_in_window,
+                COUNT(m.id) AS messages_in_window
+            FROM sessions s
+            JOIN messages m ON m.session_id = s.id
+            WHERE {where_sql}
+            GROUP BY s.id
+            ORDER BY last_in_window DESC
+            LIMIT ? OFFSET ?
+        """
+
+        with self._lock:
+            cursor = self._conn.execute(sql, params)
+            rows = cursor.fetchall()
+
+        return [dict(row) for row in rows]
+
     def get_messages_as_conversation(self, session_id: str) -> List[Dict[str, Any]]:
         """
         Load messages in the OpenAI conversation format (role + content dicts).

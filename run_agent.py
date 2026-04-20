@@ -4023,7 +4023,7 @@ class AIAgent:
         tool_guidance = []
         if "memory" in self.valid_tool_names:
             tool_guidance.append(MEMORY_GUIDANCE)
-        if "session_search" in self.valid_tool_names:
+        if "session_search" in self.valid_tool_names or "session_recap" in self.valid_tool_names:
             tool_guidance.append(SESSION_SEARCH_GUIDANCE)
         if "skill_manage" in self.valid_tool_names:
             tool_guidance.append(SKILLS_GUIDANCE)
@@ -8245,6 +8245,19 @@ class AIAgent:
                 db=self._session_db,
                 current_session_id=self.session_id,
             )
+        elif function_name == "session_recap":
+            if not self._session_db:
+                return json.dumps({"success": False, "error": "Session database not available."})
+            from tools.session_recap_tool import session_recap as _session_recap
+            return _session_recap(
+                window_start=function_args.get("window_start"),
+                window_end=function_args.get("window_end"),
+                recap_focus=function_args.get("recap_focus"),
+                include_current=function_args.get("include_current", True),
+                limit=function_args.get("limit", 3),
+                db=self._session_db,
+                current_session_id=self.session_id,
+            )
         elif function_name == "memory":
             target = function_args.get("target", "memory")
             from tools.memory_tool import memory_tool as _memory_tool
@@ -8766,6 +8779,23 @@ class AIAgent:
                 tool_duration = time.time() - tool_start_time
                 if self._should_emit_quiet_tool_messages():
                     self._vprint(f"  {_get_cute_tool_message_impl('session_search', function_args, tool_duration, result=function_result)}")
+            elif function_name == "session_recap":
+                if not self._session_db:
+                    function_result = json.dumps({"success": False, "error": "Session database not available."})
+                else:
+                    from tools.session_recap_tool import session_recap as _session_recap
+                    function_result = _session_recap(
+                        window_start=function_args.get("window_start"),
+                        window_end=function_args.get("window_end"),
+                        recap_focus=function_args.get("recap_focus"),
+                        include_current=function_args.get("include_current", True),
+                        limit=function_args.get("limit", 3),
+                        db=self._session_db,
+                        current_session_id=self.session_id,
+                    )
+                tool_duration = time.time() - tool_start_time
+                if self._should_emit_quiet_tool_messages():
+                    self._vprint(f"  {_get_cute_tool_message_impl('session_recap', function_args, tool_duration, result=function_result)}")
             elif function_name == "memory":
                 target = function_args.get("target", "memory")
                 from tools.memory_tool import memory_tool as _memory_tool
