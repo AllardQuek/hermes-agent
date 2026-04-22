@@ -643,6 +643,21 @@ class TestIsPaymentError:
         exc = Exception("connection reset")
         assert _is_payment_error(exc) is False
 
+    def test_403_with_key_limit_message_is_payment(self):
+        exc = Exception("HTTP 403: Key limit exceeded (total limit)")
+        exc.status_code = 403
+        assert _is_payment_error(exc) is True
+
+    def test_403_with_spending_limit_message_is_payment(self):
+        exc = Exception("Forbidden: spending limit reached for this key")
+        exc.status_code = 403
+        assert _is_payment_error(exc) is True
+
+    def test_403_generic_forbidden_is_not_payment(self):
+        exc = Exception("Forbidden: invalid permissions")
+        exc.status_code = 403
+        assert _is_payment_error(exc) is False
+
 
 class TestGetProviderChain:
     """_get_provider_chain() resolves functions at call time (testable)."""
@@ -734,6 +749,88 @@ class TestCallLlmPaymentFallback:
                     task="compression",
                     messages=[{"role": "user", "content": "hello"}],
                 )
+
+    def test_auto_openrouter_403_uses_concrete_failed_provider(self, monkeypatch):
+        """Auto mode should pass concrete failed backend (openrouter) to fallback."""
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+
+        primary_client = MagicMock()
+        primary_client.base_url = "https://openrouter.ai/api/v1"
+        limit_err = Exception("HTTP 403: Key limit exceeded (total limit)")
+        limit_err.status_code = 403
+        primary_client.chat.completions.create.side_effect = limit_err
+
+        with patch(
+            "agent.auxiliary_client._get_cached_client",
+            return_value=(primary_client, "google/gemini-3-flash-preview", "openrouter"),
+        ), patch(
+            "agent.auxiliary_client._resolve_task_provider_model",
+            return_value=("auto", "google/gemini-3-flash-preview", None, None, None),
+        ), patch(
+            "agent.auxiliary_client._try_payment_fallback",
+            return_value=(None, None, ""),
+        ) as mock_fallback:
+            with pytest.raises(Exception, match="Key limit exceeded"):
+                call_llm(
+                    task="compression",
+                    messages=[{"role": "user", "content": "hello"}],
+                )
+
+        assert mock_fallback.call_args.args[0] == "openrouter"
+
+    def test_auto_uses_resolved_provider_label_before_inference(self):
+        """Provider label metadata should bypass URL/type inference in auto mode."""
+        primary_client = MagicMock()
+        # Intentionally non-indicative URL to prove metadata drives the decision.
+        primary_client.base_url = "https://example.invalid/v1"
+        limit_err = Exception("HTTP 403: Key limit exceeded (total limit)")
+        limit_err.status_code = 403
+        primary_client.chat.completions.create.side_effect = limit_err
+
+        with patch(
+            "agent.auxiliary_client._get_cached_client",
+            return_value=(primary_client, "google/gemini-3-flash-preview", "openrouter"),
+        ), patch(
+            "agent.auxiliary_client._resolve_task_provider_model",
+            return_value=("auto", "google/gemini-3-flash-preview", None, None, None),
+        ), patch(
+            "agent.auxiliary_client._try_payment_fallback",
+            return_value=(None, None, ""),
+        ) as mock_fallback:
+            with pytest.raises(Exception, match="Key limit exceeded"):
+                call_llm(
+                    task="compression",
+                    messages=[{"role": "user", "content": "hello"}],
+                )
+
+        assert mock_fallback.call_args.args[0] == "openrouter"
+
+    @pytest.mark.asyncio
+    async def test_async_auto_uses_resolved_provider_label_before_inference(self):
+        """Async path should use resolved provider metadata before heuristic inference."""
+        primary_client = MagicMock()
+        primary_client.base_url = "https://example.invalid/v1"
+        limit_err = Exception("HTTP 403: Key limit exceeded (total limit)")
+        limit_err.status_code = 403
+        primary_client.chat.completions.create = AsyncMock(side_effect=limit_err)
+
+        with patch(
+            "agent.auxiliary_client._get_cached_client",
+            return_value=(primary_client, "google/gemini-3-flash-preview", "openrouter"),
+        ), patch(
+            "agent.auxiliary_client._resolve_task_provider_model",
+            return_value=("auto", "google/gemini-3-flash-preview", None, None, None),
+        ), patch(
+            "agent.auxiliary_client._try_payment_fallback",
+            return_value=(None, None, ""),
+        ) as mock_fallback:
+            with pytest.raises(Exception, match="Key limit exceeded"):
+                await async_call_llm(
+                    task="compression",
+                    messages=[{"role": "user", "content": "hello"}],
+                )
+
+        assert mock_fallback.call_args.args[0] == "openrouter"
 
 # ---------------------------------------------------------------------------
 # Gate: _resolve_api_key_provider must skip anthropic when not configured

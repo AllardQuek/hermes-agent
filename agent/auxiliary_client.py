@@ -1228,6 +1228,43 @@ _AUTO_PROVIDER_LABELS = {
 }
 
 _MAIN_RUNTIME_FIELDS = ("provider", "model", "base_url", "api_key", "api_mode")
+_CLIENT_PROVIDER_LABEL_ATTR = "_hermes_provider_label"
+
+
+def _canonical_provider_label(provider: Optional[str]) -> str:
+    """Canonicalize provider ids used by fallback skip logic."""
+    normalized = _normalize_aux_provider(provider)
+    if normalized == "custom":
+        return "local/custom"
+    return normalized
+
+
+def _set_client_provider_label(client: Any, provider_label: Optional[str]) -> None:
+    """Attach resolved provider metadata to wrapper + inner clients."""
+    label = str(provider_label or "").strip().lower()
+    if not client or not label:
+        return
+    try:
+        setattr(client, _CLIENT_PROVIDER_LABEL_ATTR, label)
+    except Exception:
+        pass
+    for inner in (getattr(client, "_client", None), getattr(client, "client", None)):
+        if inner is not None:
+            try:
+                setattr(inner, _CLIENT_PROVIDER_LABEL_ATTR, label)
+            except Exception:
+                pass
+
+
+def _get_client_provider_label(client: Any) -> str:
+    """Read resolved provider metadata if present, else empty string."""
+    for obj in (client, getattr(client, "_client", None), getattr(client, "client", None)):
+        if obj is None:
+            continue
+        label = getattr(obj, _CLIENT_PROVIDER_LABEL_ATTR, "")
+        if isinstance(label, str) and label.strip():
+            return label.strip().lower()
+    return ""
 
 
 def _normalize_main_runtime(main_runtime: Optional[Dict[str, Any]]) -> Dict[str, str]:
@@ -1263,13 +1300,20 @@ def _get_provider_chain() -> List[tuple]:
 def _is_payment_error(exc: Exception) -> bool:
     """Detect payment/credit/quota exhaustion errors.
 
-    Returns True for HTTP 402 (Payment Required) and for 429/other errors
-    whose message indicates billing exhaustion rather than rate limiting.
+    Returns True for HTTP 402 (Payment Required), OpenRouter-style 403
+    key-limit/spending-limit errors, and for 429/other errors whose
+    message indicates billing exhaustion rather than rate limiting.
     """
     status = getattr(exc, "status_code", None)
     if status == 402:
         return True
     err_lower = str(exc).lower()
+    # OpenRouter can return 403 for exhausted key-level spend limits.
+    if status == 403:
+        if any(kw in err_lower for kw in ("key limit exceeded",
+                                           "spending limit",
+                                           "total limit")):
+            return True
     # OpenRouter and other providers include "credits" or "afford" in 402 bodies,
     # but sometimes wrap them in 429 or other codes.
     if status in (402, 429, None):
@@ -1430,6 +1474,7 @@ def _resolve_auto(main_runtime: Optional[Dict[str, Any]] = None) -> Tuple[Option
             api_mode=runtime_api_mode or None,
         )
         if client is not None:
+            _set_client_provider_label(client, _canonical_provider_label(main_provider))
             logger.info("Auxiliary auto-detect: using main provider %s (%s)",
                         main_provider, resolved or main_model)
             return client, resolved or main_model
@@ -1439,6 +1484,7 @@ def _resolve_auto(main_runtime: Optional[Dict[str, Any]] = None) -> Tuple[Option
     for label, try_fn in _get_provider_chain():
         client, model = try_fn()
         if client is not None:
+            _set_client_provider_label(client, label)
             if tried:
                 logger.info("Auxiliary auto-detect: using %s (%s) — skipped: %s",
                             label, model or "default", ", ".join(tried))
@@ -1469,14 +1515,20 @@ def _to_async_client(sync_client, model: str):
     from openai import AsyncOpenAI
 
     if isinstance(sync_client, CodexAuxiliaryClient):
-        return AsyncCodexAuxiliaryClient(sync_client), model
+        async_client = AsyncCodexAuxiliaryClient(sync_client)
+        _set_client_provider_label(async_client, _get_client_provider_label(sync_client))
+        return async_client, model
     if isinstance(sync_client, AnthropicAuxiliaryClient):
-        return AsyncAnthropicAuxiliaryClient(sync_client), model
+        async_client = AsyncAnthropicAuxiliaryClient(sync_client)
+        _set_client_provider_label(async_client, _get_client_provider_label(sync_client))
+        return async_client, model
     try:
         from agent.gemini_native_adapter import GeminiNativeClient, AsyncGeminiNativeClient
 
         if isinstance(sync_client, GeminiNativeClient):
-            return AsyncGeminiNativeClient(sync_client), model
+            async_client = AsyncGeminiNativeClient(sync_client)
+            _set_client_provider_label(async_client, _get_client_provider_label(sync_client))
+            return async_client, model
     except ImportError:
         pass
     try:
@@ -1499,7 +1551,9 @@ def _to_async_client(sync_client, model: str):
         async_kwargs["default_headers"] = copilot_default_headers()
     elif base_url_host_matches(sync_base_url, "api.kimi.com"):
         async_kwargs["default_headers"] = {"User-Agent": "claude-code/0.1.0"}
-    return AsyncOpenAI(**async_kwargs), model
+    async_client = AsyncOpenAI(**async_kwargs)
+    _set_client_provider_label(async_client, _get_client_provider_label(sync_client))
+    return async_client, model
 
 
 def _normalize_resolved_model(model_name: Optional[str], provider: str) -> Optional[str]:
@@ -1606,6 +1660,8 @@ def resolve_provider_client(
                 "auxiliary provider (using %r instead)", model, resolved)
             model = None
         final_model = model or resolved
+        if not _get_client_provider_label(client):
+            _set_client_provider_label(client, _canonical_provider_label(provider))
         return (_to_async_client(client, final_model) if async_mode
                 else (client, final_model))
 
@@ -1617,6 +1673,7 @@ def resolve_provider_client(
                            "but OPENROUTER_API_KEY not set")
             return None, None
         final_model = _normalize_resolved_model(model or default, provider)
+        _set_client_provider_label(client, "openrouter")
         return (_to_async_client(client, final_model) if async_mode
                 else (client, final_model))
 
@@ -1634,6 +1691,7 @@ def resolve_provider_client(
                            "but Nous Portal not configured (run: hermes auth)")
             return None, None
         final_model = _normalize_resolved_model(model or default, provider)
+        _set_client_provider_label(client, "nous")
         return (_to_async_client(client, final_model) if async_mode
                 else (client, final_model))
 
@@ -1653,6 +1711,7 @@ def resolve_provider_client(
                 base_url=_CODEX_AUX_BASE_URL,
                 default_headers=_codex_cloudflare_headers(codex_token),
             )
+            _set_client_provider_label(raw_client, "openai-codex")
             return (raw_client, final_model)
         # Standard path: wrap in CodexAuxiliaryClient adapter
         client, default = _try_codex()
@@ -1661,6 +1720,7 @@ def resolve_provider_client(
                            "but no Codex OAuth token found (run: hermes model)")
             return None, None
         final_model = _normalize_resolved_model(model or default, provider)
+        _set_client_provider_label(client, "openai-codex")
         return (_to_async_client(client, final_model) if async_mode
                 else (client, final_model))
 
@@ -1691,6 +1751,7 @@ def resolve_provider_client(
                 extra["default_headers"] = copilot_default_headers()
             client = OpenAI(api_key=custom_key, base_url=custom_base, **extra)
             client = _wrap_if_needed(client, final_model, custom_base)
+            _set_client_provider_label(client, "local/custom")
             return (_to_async_client(client, final_model) if async_mode
                     else (client, final_model))
         # Try custom first, then codex, then API-key providers
@@ -1701,6 +1762,7 @@ def resolve_provider_client(
                 final_model = _normalize_resolved_model(model or default, provider)
                 _cbase = str(getattr(client, "base_url", "") or "")
                 client = _wrap_if_needed(client, final_model, _cbase)
+                _set_client_provider_label(client, "local/custom")
                 return (_to_async_client(client, final_model) if async_mode
                         else (client, final_model))
         logger.warning("resolve_provider_client: custom/main requested "
@@ -1725,6 +1787,7 @@ def resolve_provider_client(
                 )
                 client = OpenAI(api_key=custom_key, base_url=custom_base)
                 client = _wrap_if_needed(client, final_model, custom_base)
+                _set_client_provider_label(client, "local/custom")
                 logger.debug(
                     "resolve_provider_client: named custom provider %r (%s)",
                     provider, final_model)
@@ -1786,6 +1849,7 @@ def resolve_provider_client(
             if is_native_gemini_base_url(base_url):
                 client = GeminiNativeClient(api_key=api_key, base_url=base_url)
                 logger.debug("resolve_provider_client: %s (%s)", provider, final_model)
+                _set_client_provider_label(client, _canonical_provider_label(provider))
                 return (_to_async_client(client, final_model) if async_mode
                         else (client, final_model))
 
@@ -1820,6 +1884,7 @@ def resolve_provider_client(
         # codex-family models).  The copilot-specific wrapping above handles
         # copilot; this covers the general case (#6800).
         client = _wrap_if_needed(client, final_model, base_url)
+        _set_client_provider_label(client, _canonical_provider_label(provider))
 
         logger.debug("resolve_provider_client: %s (%s)", provider, final_model)
         return (_to_async_client(client, final_model) if async_mode
@@ -1854,6 +1919,7 @@ def resolve_provider_client(
                 args=args,
             )
             logger.debug("resolve_provider_client: %s (%s)", provider, final_model)
+            _set_client_provider_label(client, _canonical_provider_label(provider))
             return (_to_async_client(client, final_model) if async_mode
                     else (client, final_model))
         logger.warning("resolve_provider_client: external-process provider %s not "
@@ -2070,8 +2136,10 @@ def resolve_vision_provider_client(
         sync_client, default_model = _resolve_strict_vision_backend(requested)
         return _finalize(requested, sync_client, default_model)
 
-    client, final_model = _get_cached_client(requested, resolved_model, async_mode,
-                                             api_mode=resolved_api_mode)
+    client, final_model, _resolved_provider_label = _coerce_cached_client_result(
+        _get_cached_client(requested, resolved_model, async_mode,
+                           api_mode=resolved_api_mode)
+    )
     if client is None:
         return requested, None, None
     return requested, client, final_model
@@ -2116,7 +2184,8 @@ def auxiliary_max_tokens_param(value: int) -> dict:
 # Every auxiliary LLM consumer should use these instead of manually
 # constructing clients and calling .chat.completions.create().
 
-# Client cache: (provider, async_mode, base_url, api_key, api_mode, runtime_key) -> (client, default_model, loop)
+# Client cache: (provider, async_mode, base_url, api_key, api_mode, runtime_key)
+#               -> (client, default_model, loop, provider_label)
 # NOTE: loop identity is NOT part of the key.  On async cache hits we check
 # whether the cached loop is the *current* loop; if not, the stale entry is
 # replaced in-place.  This bounds cache growth to one entry per unique
@@ -2250,6 +2319,32 @@ def _force_close_async_httpx(client: Any) -> None:
         pass
 
 
+def _unpack_cache_entry(entry: tuple) -> Tuple[Optional[Any], Optional[str], Optional[Any], str]:
+    """Back-compat unpack for cache entries across tuple-shape versions."""
+    if len(entry) >= 4:
+        client, default_model, cached_loop, provider_label = entry[:4]
+        return client, default_model, cached_loop, str(provider_label or "")
+    if len(entry) == 3:
+        client, default_model, cached_loop = entry
+        provider_label = _get_client_provider_label(client)
+        return client, default_model, cached_loop, provider_label
+    if len(entry) == 2:
+        client, default_model = entry
+        provider_label = _get_client_provider_label(client)
+        return client, default_model, None, provider_label
+    return None, None, None, ""
+
+
+def _coerce_cached_client_result(result: Any) -> Tuple[Optional[Any], Optional[str], str]:
+    """Coerce _get_cached_client results from either 2-tuple or 3-tuple."""
+    if isinstance(result, tuple):
+        if len(result) >= 3:
+            return result[0], result[1], str(result[2] or "")
+        if len(result) == 2:
+            return result[0], result[1], ""
+    return None, None, ""
+
+
 def shutdown_cached_clients() -> None:
     """Close all cached clients (sync and async) to prevent event-loop errors.
 
@@ -2260,7 +2355,7 @@ def shutdown_cached_clients() -> None:
 
     with _client_cache_lock:
         for key, entry in list(_client_cache.items()):
-            client = entry[0]
+            client, _default, _loop, _label = _unpack_cache_entry(entry)
             if client is None:
                 continue
             # Mark any async httpx transport as closed first (prevents __del__
@@ -2288,7 +2383,7 @@ def cleanup_stale_async_clients() -> None:
     with _client_cache_lock:
         stale_keys = []
         for key, entry in _client_cache.items():
-            client, _default, cached_loop = entry
+            client, _default, cached_loop, _label = _unpack_cache_entry(entry)
             if cached_loop is not None and cached_loop.is_closed():
                 _force_close_async_httpx(client)
                 stale_keys.append(key)
@@ -2321,7 +2416,7 @@ def _get_cached_client(
     api_key: str = None,
     api_mode: str = None,
     main_runtime: Optional[Dict[str, Any]] = None,
-) -> Tuple[Optional[Any], Optional[str]]:
+) -> Tuple[Optional[Any], Optional[str], str]:
     """Get or create a cached client for the given provider.
 
     Async clients (AsyncOpenAI) use httpx.AsyncClient internally, which
@@ -2360,7 +2455,9 @@ def _get_cached_client(
     )
     with _client_cache_lock:
         if cache_key in _client_cache:
-            cached_client, cached_default, cached_loop = _client_cache[cache_key]
+            cached_client, cached_default, cached_loop, cached_label = _unpack_cache_entry(
+                _client_cache[cache_key]
+            )
             if async_mode:
                 # Validate: the cached client must be bound to the CURRENT,
                 # OPEN loop.  If the loop changed or was closed, the httpx
@@ -2372,13 +2469,13 @@ def _get_cached_client(
                 )
                 if loop_ok:
                     effective = _compat_model(cached_client, model, cached_default)
-                    return cached_client, effective
+                    return cached_client, effective, cached_label
                 # Stale — evict and fall through to create a new client.
                 _force_close_async_httpx(cached_client)
                 del _client_cache[cache_key]
             else:
                 effective = _compat_model(cached_client, model, cached_default)
-                return cached_client, effective
+                return cached_client, effective, cached_label
     # Build outside the lock
     client, default_model = resolve_provider_client(
         provider,
@@ -2393,6 +2490,7 @@ def _get_cached_client(
         # For async clients, remember which loop they were created on so we
         # can detect stale entries later.
         bound_loop = current_loop
+        provider_label = _get_client_provider_label(client)
         with _client_cache_lock:
             if cache_key not in _client_cache:
                 # Safety belt: if the cache has grown beyond the max, evict
@@ -2401,10 +2499,13 @@ def _get_cached_client(
                     evict_key, evict_entry = next(iter(_client_cache.items()))
                     _force_close_async_httpx(evict_entry[0])
                     del _client_cache[evict_key]
-                _client_cache[cache_key] = (client, default_model, bound_loop)
+                _client_cache[cache_key] = (client, default_model, bound_loop, provider_label)
             else:
-                client, default_model, _ = _client_cache[cache_key]
-    return client, model or default_model
+                client, default_model, _bound_loop, provider_label = _unpack_cache_entry(
+                    _client_cache[cache_key]
+                )
+        return client, model or default_model, provider_label
+    return client, model or default_model, ""
 
 
 def _resolve_task_provider_model(
@@ -2730,7 +2831,7 @@ def call_llm(
             )
         resolved_provider = effective_provider or resolved_provider
     else:
-        client, final_model = _get_cached_client(
+        cached_result = _get_cached_client(
             resolved_provider,
             resolved_model,
             base_url=resolved_base_url,
@@ -2738,6 +2839,7 @@ def call_llm(
             api_mode=resolved_api_mode,
             main_runtime=main_runtime,
         )
+        client, final_model, resolved_provider_label = _coerce_cached_client_result(cached_result)
         if client is None:
             # When the user explicitly chose a non-OpenRouter provider but no
             # credentials were found, fail fast instead of silently routing
@@ -2757,7 +2859,9 @@ def call_llm(
             if not resolved_base_url:
                 logger.info("Auxiliary %s: provider %s unavailable, trying auto-detection chain",
                             task or "call", resolved_provider)
-                client, final_model = _get_cached_client("auto", main_runtime=main_runtime)
+                client, final_model, resolved_provider_label = _coerce_cached_client_result(
+                    _get_cached_client("auto", main_runtime=main_runtime)
+                )
         if client is None:
             raise RuntimeError(
                 f"No LLM provider configured for task={task} provider={resolved_provider}. "
@@ -2846,11 +2950,12 @@ def call_llm(
         # auto (the default) = best-effort fallback chain.  (#7559)
         is_auto = resolved_provider in ("auto", "", None)
         if should_fallback and is_auto:
+            failed_provider = str(resolved_provider_label or "").strip().lower()
             reason = "payment error" if _is_payment_error(first_err) else "connection error"
             logger.info("Auxiliary %s: %s on %s (%s), trying fallback",
                         task or "call", reason, resolved_provider, first_err)
             fb_client, fb_model, fb_label = _try_payment_fallback(
-                resolved_provider, task, reason=reason)
+                failed_provider, task, reason=reason)
             if fb_client is not None:
                 fb_kwargs = _build_call_kwargs(
                     fb_label, fb_model, messages,
@@ -2967,7 +3072,7 @@ async def async_call_llm(
             )
         resolved_provider = effective_provider or resolved_provider
     else:
-        client, final_model = _get_cached_client(
+        cached_result = _get_cached_client(
             resolved_provider,
             resolved_model,
             async_mode=True,
@@ -2975,6 +3080,7 @@ async def async_call_llm(
             api_key=resolved_api_key,
             api_mode=resolved_api_mode,
         )
+        client, final_model, resolved_provider_label = _coerce_cached_client_result(cached_result)
         if client is None:
             _explicit = (resolved_provider or "").strip().lower()
             if _explicit and _explicit not in ("auto", "openrouter", "custom"):
@@ -2986,7 +3092,9 @@ async def async_call_llm(
             if not resolved_base_url:
                 logger.info("Auxiliary %s: provider %s unavailable, trying auto-detection chain",
                             task or "call", resolved_provider)
-                client, final_model = _get_cached_client("auto", async_mode=True)
+                client, final_model, resolved_provider_label = _coerce_cached_client_result(
+                    _get_cached_client("auto", async_mode=True)
+                )
         if client is None:
             raise RuntimeError(
                 f"No LLM provider configured for task={task} provider={resolved_provider}. "
@@ -3052,11 +3160,12 @@ async def async_call_llm(
         should_fallback = _is_payment_error(first_err) or _is_connection_error(first_err)
         is_auto = resolved_provider in ("auto", "", None)
         if should_fallback and is_auto:
+            failed_provider = str(resolved_provider_label or "").strip().lower()
             reason = "payment error" if _is_payment_error(first_err) else "connection error"
             logger.info("Auxiliary %s (async): %s on %s (%s), trying fallback",
                         task or "call", reason, resolved_provider, first_err)
             fb_client, fb_model, fb_label = _try_payment_fallback(
-                resolved_provider, task, reason=reason)
+                failed_provider, task, reason=reason)
             if fb_client is not None:
                 fb_kwargs = _build_call_kwargs(
                     fb_label, fb_model, messages,
