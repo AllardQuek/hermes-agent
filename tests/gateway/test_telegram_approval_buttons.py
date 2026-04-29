@@ -103,10 +103,12 @@ class TestTelegramExecApproval:
             session_key="my-session-key",
         )
 
-        # The approval_id should map to the session_key
+        # The approval_id should map to a dict containing session_key and command
         assert len(adapter._approval_state) == 1
         approval_id = list(adapter._approval_state.keys())[0]
-        assert adapter._approval_state[approval_id] == "my-session-key"
+        state = adapter._approval_state[approval_id]
+        assert state["session_key"] == "my-session-key"
+        assert state["command"] == "echo test"
 
     @pytest.mark.asyncio
     async def test_sends_in_thread(self):
@@ -179,7 +181,7 @@ class TestTelegramApprovalCallback:
     async def test_resolves_approval_on_click(self):
         adapter = _make_adapter()
         # Set up approval state
-        adapter._approval_state[1] = "agent:main:telegram:group:12345:99"
+        adapter._approval_state[1] = {"session_key": "agent:main:telegram:group:12345:99", "command": "rm -rf /tmp"}
 
         # Mock callback query
         query = AsyncMock()
@@ -208,7 +210,7 @@ class TestTelegramApprovalCallback:
     @pytest.mark.asyncio
     async def test_deny_button(self):
         adapter = _make_adapter()
-        adapter._approval_state[2] = "some-session"
+        adapter._approval_state[2] = {"session_key": "some-session", "command": "echo test"}
 
         query = AsyncMock()
         query.data = "ea:deny:2"

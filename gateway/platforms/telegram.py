@@ -215,6 +215,9 @@ class TelegramAdapter(BasePlatformAdapter):
     # Threshold for detecting Telegram client-side message splits.
     # When a chunk is near this limit, a continuation is almost certain.
     _SPLIT_THRESHOLD = 4000
+    # Maximum command characters shown in approval messages (send and resolved edit).
+    # Matches the HTML <pre> block budget inside a 4096-char Telegram message.
+    APPROVAL_CMD_PREVIEW_LEN = 3800
     MEDIA_GROUP_WAIT_SECONDS = 0.8
     _GENERAL_TOPIC_THREAD_ID = "1"
     
@@ -249,8 +252,8 @@ class TelegramAdapter(BasePlatformAdapter):
         self._dm_topics_config: List[Dict[str, Any]] = self.config.extra.get("dm_topics", [])
         # Interactive model picker state per chat
         self._model_picker_state: Dict[str, dict] = {}
-        # Approval button state: message_id → session_key
-        self._approval_state: Dict[int, str] = {}
+        # Approval button state: approval_id → {"session_key": ..., "command": ...}
+        self._approval_state: Dict[int, dict] = {}
 
     @staticmethod
     def _is_callback_user_authorized(user_id: str) -> bool:
@@ -1280,7 +1283,7 @@ class TelegramAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="Not connected")
 
         try:
-            cmd_preview = command[:3800] + "..." if len(command) > 3800 else command
+            cmd_preview = command[:self.APPROVAL_CMD_PREVIEW_LEN] + "..." if len(command) > self.APPROVAL_CMD_PREVIEW_LEN else command
             text = (
                 f"⚠️ <b>Command Approval Required</b>\n\n"
                 f"<pre>{_html.escape(cmd_preview)}</pre>\n\n"
@@ -1322,8 +1325,8 @@ class TelegramAdapter(BasePlatformAdapter):
 
             msg = await self._bot.send_message(**kwargs)
 
-            # Store session_key keyed by approval_id for the callback handler
-            self._approval_state[approval_id] = session_key
+            # Store session_key + command keyed by approval_id for the callback handler
+            self._approval_state[approval_id] = {"session_key": session_key, "command": command}
 
             return SendResult(success=True, message_id=str(msg.message_id))
         except Exception as e:
@@ -1659,30 +1662,45 @@ class TelegramAdapter(BasePlatformAdapter):
                     await query.answer(text="⛔ You are not authorized to approve commands.")
                     return
 
-                session_key = self._approval_state.pop(approval_id, None)
-                if not session_key:
+                approval_entry = self._approval_state.pop(approval_id, None)
+                if not approval_entry:
                     await query.answer(text="This approval has already been resolved.")
                     return
 
+                session_key = approval_entry["session_key"]
+                pending_cmd = approval_entry.get("command", "")
+
                 # Map choice to human-readable label
                 label_map = {
-                    "once": "✅ Approved once",
-                    "session": "✅ Approved for session",
-                    "always": "✅ Approved permanently",
-                    "deny": "❌ Denied",
+                    "once": "\u2705 Approved once",
+                    "session": "\u2705 Approved for session",
+                    "always": "\u2705 Approved permanently",
+                    "deny": "\u274c Denied",
                 }
                 user_display = getattr(query.from_user, "first_name", "User")
                 label = label_map.get(choice, "Resolved")
 
                 await query.answer(text=label)
 
-                # Edit message to show decision, remove buttons
+                # Edit message to show decision + command so user retains context.
                 try:
-                    await query.edit_message_text(
-                        text=f"{label} by {user_display}",
-                        parse_mode=ParseMode.MARKDOWN,
-                        reply_markup=None,
-                    )
+                    if pending_cmd and choice != "deny":
+                        cmd_preview = pending_cmd[:self.APPROVAL_CMD_PREVIEW_LEN] + "..." if len(pending_cmd) > self.APPROVAL_CMD_PREVIEW_LEN else pending_cmd
+                        edited_text = (
+                            f"{label} by {user_display}\n\n"
+                            f"<b>Executing:</b>\n<pre>{_html.escape(cmd_preview)}</pre>"
+                        )
+                        await query.edit_message_text(
+                            text=edited_text,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=None,
+                        )
+                    else:
+                        await query.edit_message_text(
+                            text=f"{label} by {user_display}",
+                            parse_mode=ParseMode.MARKDOWN,
+                            reply_markup=None,
+                        )
                 except Exception:
                     pass  # non-fatal if edit fails
 

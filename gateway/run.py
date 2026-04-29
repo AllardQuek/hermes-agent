@@ -307,6 +307,11 @@ from gateway.whatsapp_identity import (
 
 logger = logging.getLogger(__name__)
 
+# Maximum command characters shown in plain-text fallback approval messages.
+# Both the warning prompt and the /approve confirmation use this limit so the
+# user never sees more in the echo than they saw in the original request.
+_APPROVAL_TEXT_CMD_PREVIEW_LEN = 200
+
 
 # Sentinel placed into _running_agents immediately when a session starts
 # processing, *before* any await.  Prevents a second message for the same
@@ -7876,6 +7881,10 @@ class GatewayRunner:
             choice = "once"
             scope_msg = ""
 
+        # Grab pending command text before resolving (agent resumes immediately after).
+        pending = self._pending_approvals.pop(session_key, {})
+        approved_cmd = pending.get("command", "") if not resolve_all else ""
+
         count = resolve_gateway_approval(session_key, choice, resolve_all=resolve_all)
         if not count:
             return "No pending command to approve."
@@ -7887,6 +7896,17 @@ class GatewayRunner:
 
         count_msg = f" ({count} commands)" if count > 1 else ""
         logger.info("User approved %d dangerous command(s) via /approve%s", count, scope_msg)
+
+        # Echo the approved command back so the user retains context in chat.
+        # Truncate at _APPROVAL_TEXT_CMD_PREVIEW_LEN — matches the plain-text approval
+        # request truncation in _approval_notify_sync, so the confirmation never shows
+        # more than the user already saw in the original warning message.
+        if approved_cmd:
+            cmd_preview = approved_cmd[:_APPROVAL_TEXT_CMD_PREVIEW_LEN] + "..." if len(approved_cmd) > _APPROVAL_TEXT_CMD_PREVIEW_LEN else approved_cmd
+            return (
+                f"✅ Command approved{scope_msg}. The agent is resuming...\n\n"
+                f"**Executing:**\n```\n{cmd_preview}\n```"
+            )
         return f"✅ Command{'s' if count > 1 else ''} approved{scope_msg}{count_msg}. The agent is resuming..."
 
     async def _handle_deny_command(self, event: MessageEvent) -> str:
@@ -10372,6 +10392,12 @@ class GatewayRunner:
                 cmd = approval_data.get("command", "")
                 desc = approval_data.get("description", "dangerous command")
 
+                # Store command so _handle_approve_command can echo it back.
+                self._pending_approvals[_approval_session_key] = {
+                    "command": cmd,
+                    "description": desc,
+                }
+
                 # Prefer button-based approval when the adapter supports it.
                 # Check the *class* for the method, not the instance — avoids
                 # false positives from MagicMock auto-attribute creation in tests.
@@ -10399,7 +10425,7 @@ class GatewayRunner:
                         )
 
                 # Fallback: plain text approval prompt
-                cmd_preview = cmd[:200] + "..." if len(cmd) > 200 else cmd
+                cmd_preview = cmd[:_APPROVAL_TEXT_CMD_PREVIEW_LEN] + "..." if len(cmd) > _APPROVAL_TEXT_CMD_PREVIEW_LEN else cmd
                 msg = (
                     f"⚠️ **Dangerous command requires approval:**\n"
                     f"```\n{cmd_preview}\n```\n"

@@ -152,6 +152,7 @@ class TestFeishuExecApproval:
         assert state["session_key"] == "my-session-key"
         assert state["message_id"] == "msg_002"
         assert state["chat_id"] == "oc_12345"
+        assert state["command"] == "echo test"
 
     @pytest.mark.asyncio
     async def test_not_connected(self):

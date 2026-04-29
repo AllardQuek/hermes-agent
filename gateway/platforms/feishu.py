@@ -1787,6 +1787,7 @@ class FeishuAdapter(BasePlatformAdapter):
                     "session_key": session_key,
                     "message_id": result.message_id or "",
                     "chat_id": chat_id,
+                    "command": command,
                 }
             return result
         except Exception as exc:
@@ -1794,10 +1795,17 @@ class FeishuAdapter(BasePlatformAdapter):
             return SendResult(success=False, error=str(exc))
 
     @staticmethod
-    def _build_resolved_approval_card(*, choice: str, user_name: str) -> Dict[str, Any]:
+    def _build_resolved_approval_card(*, choice: str, user_name: str, command: str = "") -> Dict[str, Any]:
         """Build raw card JSON for a resolved approval action."""
         icon = "❌" if choice == "deny" else "✅"
         label = _APPROVAL_LABEL_MAP.get(choice, "Resolved")
+        decision_line = f"{icon} **{label}** by {user_name}"
+        if command and choice != "deny":
+            # Feishu card code blocks use ``` fences; truncate to keep card readable.
+            cmd_preview = command[:3800] + "..." if len(command) > 3800 else command
+            body = f"{decision_line}\n\n**Executing:**\n```\n{cmd_preview}\n```"
+        else:
+            body = decision_line
         return {
             "config": {"wide_screen_mode": True},
             "header": {
@@ -1807,7 +1815,7 @@ class FeishuAdapter(BasePlatformAdapter):
             "elements": [
                 {
                     "tag": "markdown",
-                    "content": f"{icon} **{label}** by {user_name}",
+                    "content": body,
                 },
             ],
         }
@@ -2344,13 +2352,18 @@ class FeishuAdapter(BasePlatformAdapter):
 
         self._submit_on_loop(loop, self._resolve_approval(approval_id, choice, user_name))
 
+        # Read command from state now (before _resolve_approval pops it asynchronously).
+        approved_cmd = (self._approval_state.get(approval_id) or {}).get("command", "")
+
         if P2CardActionTriggerResponse is None:
             return None
         response = P2CardActionTriggerResponse()
         if CallBackCard is not None:
             card = CallBackCard()
             card.type = "raw"
-            card.data = self._build_resolved_approval_card(choice=choice, user_name=user_name)
+            card.data = self._build_resolved_approval_card(
+                choice=choice, user_name=user_name, command=approved_cmd
+            )
             response.card = card
         return response
 
