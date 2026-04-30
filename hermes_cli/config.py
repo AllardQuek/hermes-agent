@@ -955,6 +955,29 @@ DEFAULT_CONFIG = {
         },
     },
 
+    # Bilingual video caption settings (used by the video_caption toolset).
+    # Add NVIDIA_API_KEY to ~/.hermes/.env to enable Kimi K2.5 translation.
+    "caption": {
+        "style": {
+            # Font name — must be installed on the system.  "Arial" is a safe default.
+            "font": "Arial",
+            # English caption font size in pixels (1920x1080 reference frame).
+            "font_size": 48,
+            # Caption fill colour in ASS format: &HAABBGGRR (alpha, blue, green, red).
+            "primary_color": "&H00FFFFFF",  # white
+            # Outline colour.
+            "outline_color": "&H00000000",  # black
+            # Outline stroke width in pixels.
+            "outline_width": 3,
+            # ASS numpad alignment (2 = bottom-center, 8 = top-center).
+            "alignment": 2,
+            # Vertical margin from the bottom edge in pixels.
+            "margin_bottom": 80,
+            # Maximum characters per caption line before wrapping.
+            "max_line_length": 42,
+        }
+    },
+
     # Honcho AI-native memory -- reads ~/.honcho/config.json as single source of truth.
     # This section is only needed for hermes-specific overrides; everything else
     # (apiKey, workspace, peerName, sessions, enabled) comes from the global config.
