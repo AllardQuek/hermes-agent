@@ -114,7 +114,7 @@ Added a `caption` section to `DEFAULT_CONFIG` with fully documented style defaul
         "outline_color": "&H00000000",  # black
         "outline_width": 3,
         "alignment": 2,                 # bottom-center
-        "margin_bottom": 80,
+        "margin_edge": 80,
         "max_line_length": 42,
     }
 }
@@ -451,10 +451,11 @@ Changes made after STATUS.md was last written (commits after `7199ddb37`).
 - The **alignment picker** (3×3 numpad grid) remains — it's the canonical way to control caption position.
 - No `position` field in `CaptionStyle` TypeScript interface; no `\pos()` in ASS output.
 
-#### b) `margin_bottom` → `margin_edge` rename (backend only)
-- `pipeline.py` `_DEFAULT_STYLE` and `_build_ass_content()` now use `margin_edge` to accurately reflect that it's margin from the *nearest edge* regardless of alignment direction.
+#### b) `margin_bottom` → `margin_edge` rename (complete)
+- `pipeline.py` `_DEFAULT_STYLE` and `_build_ass_content()` renamed to `margin_edge`.
 - `plugin_api.py` `_STYLE_DEFAULTS` and all endpoints updated to `margin_edge`.
-- **Known inconsistency**: the TypeScript `CaptionStyle` interface still uses `margin_bottom` as the key name. The frontend sends `margin_bottom`; the pipeline reads `margin_edge`. This naming mismatch is the remaining root cause of the margin re-burn bug — margin UI changes don't apply correctly to the burned video. Multiple commits attempted to fix this; the fix is incomplete.
+- `dashboard/src/index.tsx` `CaptionStyle` interface, `STYLE_DEFAULTS`, and all usages renamed to `margin_edge` — frontend now sends the key the backend reads.
+- `hermes_cli/config.py` `DEFAULT_CONFIG["caption"]["style"]` renamed to `margin_edge` — CLI path now consistent.
 
 #### c) Fixed relative import bug in `plugin_api.py`
 - Dashboard loader imports `plugin_api.py` by file path (not as a package module), so `from . import pipeline` failed with 500 errors.
@@ -520,7 +521,7 @@ Changes made after STATUS.md was last written (commits after `7199ddb37`).
 | Task | Notes |
 |---|---|
 | Font selection | "Arial" is safe fallback; "Montserrat Bold" looks better for Shorts |
-| Style tuning | Run against a real Shorts clip, adjust `font_size` / `margin_bottom` to taste |
+| Style tuning | Run against a real Shorts clip, adjust `font_size` / `margin_edge` to taste |
 | Style memory seed | Burn 3+ jobs with non-default style to make "Suggest style" button appear in demo |
 | Demo video 1 | 10–20s clip — show raw → captioned → NL correction → re-burn |
 | Demo video 2 | Same topic, second take — show style suggestion applied from memory |
@@ -547,7 +548,7 @@ Changes made after STATUS.md was last written (commits after `7199ddb37`).
 | CPU transcription speed | Medium | 20s video takes ~15–30s on CPU — acceptable for demo, mention it in video |
 | Telegram 50MB video limit | Low risk | 10–20s Shorts are typically 5–25MB — should be fine |
 | No automated tests for new tool | Low risk | Manual E2E smoke test covers the hackathon window |
-| **`margin_edge` vs `margin_bottom` mismatch** | **Medium** | **Frontend `CaptionStyle` interface uses `margin_bottom`; backend reads `margin_edge`. Margin UI changes don't persist correctly to burn. Fix: rename `margin_bottom` → `margin_edge` in index.tsx (`CaptionStyle` interface + `STYLE_DEFAULTS` + all usages).** |
+| ~~`margin_edge` vs `margin_bottom` mismatch~~ | ~~Medium~~ | **Fixed** — `margin_edge` now consistent across `pipeline.py`, `plugin_api.py`, `index.tsx`, and `config.py` |
 
 ---
 

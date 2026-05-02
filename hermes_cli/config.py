@@ -971,8 +971,8 @@ DEFAULT_CONFIG = {
             "outline_width": 3,
             # ASS numpad alignment (2 = bottom-center, 8 = top-center).
             "alignment": 2,
-            # Vertical margin from the bottom edge in pixels.
-            "margin_bottom": 80,
+            # Vertical margin from the nearest edge in pixels.
+            "margin_edge": 80,
             # Maximum characters per caption line before wrapping.
             "max_line_length": 42,
         }

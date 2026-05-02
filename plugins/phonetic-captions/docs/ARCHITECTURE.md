@@ -305,7 +305,7 @@ erDiagram
         string outline_color
         int outline_width
         int alignment
-        int margin_bottom
+        int margin_edge
         int max_line_length
     }
 
