@@ -851,8 +851,15 @@ function NLEditPanel({
     if (p.op === "merge") return `Merge segments ${p.segment_ids.map((id) => `#${id + 1}`).join(" + ")}`;
     if (p.op === "split") {
       const seg = segments.find((s) => s.id === p.segment_id);
+      const words = seg?.words ?? [];
+      if (words.length < 2) {
+        return `⚠ Split #${p.segment_id + 1} — no word timestamps (will be skipped; use ✂ scissors instead)`;
+      }
       const wordText = seg?.words?.[p.at_word_index]?.word?.trim();
-      return `Split segment #${p.segment_id + 1} — "${wordText ?? `word ${p.at_word_index}`}" starts new segment`;
+      if (!wordText) {
+        return `⚠ Split #${p.segment_id + 1} — word index ${p.at_word_index} out of range (will be skipped)`;
+      }
+      return `Split segment #${p.segment_id + 1} — "${wordText}" starts new segment`;
     }
     return "Unknown operation";
   };
@@ -1384,6 +1391,9 @@ function EditorView({ jobId, onBack }: { jobId: string; onBack: () => void }) {
   // NL panel pre-fill (from QA "Fix with AI")
   const [nlPrefill, setNlPrefill] = useState<string | undefined>(undefined);
 
+  // Warning shown when an NL split patch is silently skipped (no word timestamps)
+  const [applyWarning, setApplyWarning] = useState<string | null>(null);
+
   // Ref for scrolling to a flagged segment
   const segmentRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
@@ -1495,6 +1505,9 @@ function EditorView({ jobId, onBack }: { jobId: string; onBack: () => void }) {
       if (editedIds.size > 0) setQaFlags((prev) => prev.filter((f) => !editedIds.has(f.segment_id)));
     }
 
+    // Hoisted outside setSegments so it's readable after the updater runs
+    const skippedNums: number[] = [];
+
     setSegments((prev) => {
       let segs = [...prev];
 
@@ -1536,6 +1549,7 @@ function EditorView({ jobId, onBack }: { jobId: string; onBack: () => void }) {
       const splitIds = [...splitMap.keys()].sort(
         (a, b) => segs.findIndex((s) => s.id === b) - segs.findIndex((s) => s.id === a),
       );
+      const skippedNums: number[] = [];
       for (const segId of splitIds) {
         const idx = segs.findIndex((s) => s.id === segId);
         if (idx === -1) continue;
@@ -1544,7 +1558,10 @@ function EditorView({ jobId, onBack }: { jobId: string; onBack: () => void }) {
         const splitPoints = [...new Set(splitMap.get(segId)!)]
           .sort((a, b) => a - b)
           .filter((pt) => pt > 0 && pt < words.length);
-        if (splitPoints.length === 0 || words.length < 2) continue;
+        if (splitPoints.length === 0 || words.length < 2) {
+          skippedNums.push(segId + 1);
+          continue;
+        }
         const boundaries = [0, ...splitPoints, words.length];
         const newSegs: CaptionSegment[] = [];
         for (let j = 0; j < boundaries.length - 1; j++) {
@@ -1567,6 +1584,13 @@ function EditorView({ jobId, onBack }: { jobId: string; onBack: () => void }) {
 
       return segs.map((s, i) => ({ ...s, id: i }));
     });
+    if (skippedNums.length > 0) {
+      setApplyWarning(
+        `Split skipped for segment${skippedNums.length > 1 ? "s" : ""} #${skippedNums.join(", #")} — no word timestamps. Use the ✂ scissors tool or re-run the pipeline with word timestamps enabled.`
+      );
+    } else {
+      setApplyWarning(null);
+    }
   }, []);
 
   const handleReburn = async () => {
@@ -1707,6 +1731,13 @@ function EditorView({ jobId, onBack }: { jobId: string; onBack: () => void }) {
               <h2 className="text-base font-semibold text-foreground">Segments</h2>
               <span className="text-xs text-muted-foreground flex-1">{segments.length} total · edits are saved on Re-burn</span>
             </div>
+            {applyWarning && (
+              <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-400/50 bg-amber-400/10 px-3 py-2">
+                <span className="text-amber-500 shrink-0 mt-0.5">⚠</span>
+                <p className="text-xs text-amber-700 dark:text-amber-400">{applyWarning}</p>
+                <button onClick={() => setApplyWarning(null)} className="ml-auto shrink-0 text-amber-500 hover:text-amber-700 text-xs">✕</button>
+              </div>
+            )}
 
             {segments.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-muted-foreground border border-dashed border-border rounded-xl">
