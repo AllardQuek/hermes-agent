@@ -821,10 +821,12 @@ function NLEditPanel({
     setError(null);
     setPatches(null);
     try {
+      // Send current in-memory segments (including word-level timestamps) so the backend
+      // works from live state and the LLM can pick accurate split points from real word timings.
       const res = await fetchJSON(`${API}/jobs/${jobId}/nl-edit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instruction: inst }),
+        body: JSON.stringify({ instruction: inst, segments }),
       });
       const ps: NLPatch[] = res.patches ?? [];
       setPatches(ps);
@@ -847,7 +849,11 @@ function NLEditPanel({
   const patchDescription = (p: NLPatch): string => {
     if (p.op === "edit") return `#${p.segment_id + 1} ${p.field}: "${p.old}" → "${p.new}"`;
     if (p.op === "merge") return `Merge segments ${p.segment_ids.map((id) => `#${id + 1}`).join(" + ")}`;
-    if (p.op === "split") return `Split segment #${p.segment_id + 1} at word ${p.at_word_index}`;
+    if (p.op === "split") {
+      const seg = segments.find((s) => s.id === p.segment_id);
+      const wordText = seg?.words?.[p.at_word_index]?.word?.trim();
+      return `Split segment #${p.segment_id + 1} — "${wordText ?? `word ${p.at_word_index}`}" starts new segment`;
+    }
     return "Unknown operation";
   };
 
@@ -1461,6 +1467,7 @@ function EditorView({ jobId, onBack }: { jobId: string; onBack: () => void }) {
         id: i,
       }))
     );
+    setQaFlags([]);  // ids are reassigned after split; clear to avoid stale amber borders
     setSplitState(null);
   }, [splitState, segments]);
 
@@ -1479,11 +1486,20 @@ function EditorView({ jobId, onBack }: { jobId: string; onBack: () => void }) {
   };
 
   const handleApplyNLPatches = useCallback((patches: NLPatch[]) => {
+    const hasStructural = patches.some((p) => p.op === "merge" || p.op === "split");
+    if (hasStructural) {
+      setQaFlags([]);  // segment ids will change; stale highlights would be misleading
+    } else {
+      // For edit-only patches, remove flags only for the segments that were fixed
+      const editedIds = new Set(patches.filter((p) => p.op === "edit").map((p) => p.segment_id));
+      if (editedIds.size > 0) setQaFlags((prev) => prev.filter((f) => !editedIds.has(f.segment_id)));
+    }
+
     setSegments((prev) => {
       let segs = [...prev];
-      // Process in reverse order to keep indices stable for splits/merges
-      const sorted = [...patches].reverse();
-      for (const p of sorted) {
+
+      // --- Pass 1: edits and merges (reverse order keeps array indices stable) ---
+      for (const p of [...patches].reverse()) {
         if (p.op === "edit") {
           const idx = segs.findIndex((s) => s.id === p.segment_id);
           if (idx !== -1) segs[idx] = { ...segs[idx], [p.field]: p.new };
@@ -1498,19 +1514,57 @@ function EditorView({ jobId, onBack }: { jobId: string; onBack: () => void }) {
               end: segs[indices[indices.length - 1]].end,
               text: indices.map((i) => segs[i].text).join(" ").trim(),
               phonetic: "",
+              words: indices.flatMap((i) => segs[i].words ?? []),
             };
-            segs = [
-              ...segs.slice(0, indices[0]),
-              merged,
-              ...segs.filter((_, i) => !indices.includes(i) || i === indices[0]).slice(indices[0] + 1),
-            ].filter((_, i) => !indices.slice(1).map((x) => x).includes(i));
-            // Rebuild properly using filter
-            const keep = new Set(indices.slice(1));
-            segs = segs.filter((s, i) => !keep.has(i));
+            const removeSet = new Set(indices.slice(1));
+            segs = segs
+              .map((s, i) => (i === indices[0] ? merged : s))
+              .filter((_, i) => !removeSet.has(i));
           }
         }
-        // split op is handled via existing applyWordSplit UI; skip here
       }
+
+      // --- Pass 2: splits (grouped by segment, applied tail-first so earlier splits
+      //     don't shift the positions of later ones in the same pass) ---
+      const splitMap = new Map<number, number[]>();
+      for (const p of patches) {
+        if (p.op !== "split") continue;
+        const arr = splitMap.get(p.segment_id) ?? [];
+        arr.push(p.at_word_index);
+        splitMap.set(p.segment_id, arr);
+      }
+      const splitIds = [...splitMap.keys()].sort(
+        (a, b) => segs.findIndex((s) => s.id === b) - segs.findIndex((s) => s.id === a),
+      );
+      for (const segId of splitIds) {
+        const idx = segs.findIndex((s) => s.id === segId);
+        if (idx === -1) continue;
+        const seg = segs[idx];
+        const words = seg.words ?? [];
+        const splitPoints = [...new Set(splitMap.get(segId)!)]
+          .sort((a, b) => a - b)
+          .filter((pt) => pt > 0 && pt < words.length);
+        if (splitPoints.length === 0 || words.length < 2) continue;
+        const boundaries = [0, ...splitPoints, words.length];
+        const newSegs: CaptionSegment[] = [];
+        for (let j = 0; j < boundaries.length - 1; j++) {
+          const group = words.slice(boundaries[j], boundaries[j + 1]);
+          if (group.length === 0) continue;
+          newSegs.push({
+            ...seg,
+            id: 0,
+            start: group[0].start,
+            end: group[group.length - 1].end,
+            text: group.map((w) => w.word.trim()).join(" ").trim(),
+            phonetic: "",
+            words: group,
+          });
+        }
+        if (newSegs.length >= 2) {
+          segs = [...segs.slice(0, idx), ...newSegs, ...segs.slice(idx + 1)];
+        }
+      }
+
       return segs.map((s, i) => ({ ...s, id: i }));
     });
   }, []);

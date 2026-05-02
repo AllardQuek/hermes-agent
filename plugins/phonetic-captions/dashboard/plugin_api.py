@@ -232,6 +232,7 @@ class StylePayload(BaseModel):
 
 class NLEditPayload(BaseModel):
     instruction: str
+    segments: list[dict[str, Any]] | None = None  # current in-memory state from the frontend
 
 
 # ---------------------------------------------------------------------------
@@ -532,10 +533,18 @@ Each patch is one of:
   {{"op":"merge",   "segment_ids":[<int>, ...]}}
   {{"op":"split",   "segment_id":<int>, "at_word_index":<int>}}
 
+Each segment includes a "words" field: a list of {{"word":<str>, "start":<sec>, "end":<sec>}} objects
+containing Whisper word-level timestamps. Use these when generating split patches.
+
 Rules:
 - Only include patches that actually change something.
 - For "merge", list segment IDs (id values, not num values) in order; the merged text is the concatenation of their texts separated by a space.
-- For "split", at_word_index is 0-based and must be within the words array of that segment.
+- For "split", at_word_index is the 0-based index into the "words" array of the FIRST word of the new
+  (second) segment — i.e. words[0..at_word_index-1] stay in the original, words[at_word_index..] form
+  the new segment. at_word_index must be ≥ 1 and < len(words).
+  Prefer split points where the timing gap between adjacent words is largest:
+    words[at_word_index].start − words[at_word_index−1].end
+  To split into N parts, emit N−1 split patches against the same segment_id with different at_word_index values.
 - "lang" must be "en" or "{target_lang_code}".
 - When changing lang to "en", also emit an edit patch clearing "phonetic" to "".
 - "phonetic" values MUST use only regular English letters, hyphens, spaces, and square brackets.
@@ -550,15 +559,20 @@ Rules:
 async def nl_edit_segments(job_id: str, payload: NLEditPayload):
     """Apply a natural-language instruction to segments and return proposed patches."""
     data = _load_caption_job(job_id)
-    segments = data.get("segments", [])
     job_target_lang = data.get("target_lang", "vi")
     job_target_lang_name = _get_pipeline()._lang_name(job_target_lang)
+
+    # Prefer the live in-memory segments sent by the frontend (avoids id-drift when
+    # the user applies NL patches without re-burning, which would leave disk state stale).
+    # Fall back to disk segments if the frontend did not send them (e.g. older client).
+    segments = payload.segments if payload.segments is not None else data.get("segments", [])
 
     # Build a compact segment representation for the prompt.
     # Prepend "num" (1-indexed display number) so the AI can reliably map
     # user references like "#2" or "segment 3" to the correct 0-based id.
+    # Words are included so the LLM can pick accurate split indices from real timings.
     seg_compact = [
-        {"num": i + 1, **{k: v for k, v in s.items() if k != "words"}}
+        {"num": i + 1, **s}
         for i, s in enumerate(segments)
     ]
     user_message = (
