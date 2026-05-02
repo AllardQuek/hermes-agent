@@ -1,4 +1,4 @@
-# Hackathon Submission — SpeakAlong for Hermes
+# Hackathon Submission — SayWithMe for Hermes
 
 **Track**: Kimi Track (primary) + General Track  
 **Submitted by**: Allard Quek  
@@ -9,7 +9,7 @@
 
 ## One-line pitch
 
-> **SpeakAlong adds AI-generated phonetic captions to language teaching videos — watch, read pronunciation, speak along. Any language. Seconds, not minutes. Powered by Kimi K2.6.**
+> **SayWithMe adds AI-generated phonetic captions to language teaching videos — watch, read pronunciation, speak along. Any language. Seconds, not minutes. Powered by Kimi K2.6.**
 
 ---
 
@@ -29,7 +29,7 @@ Language teachers creating teaching shorts face a painful captioning gap:
 
 ## Solution
 
-**SpeakAlong** is a self-contained Hermes plugin that handles the full pipeline for any language:
+**SayWithMe** is a self-contained Hermes plugin that handles the full pipeline for any language:
 
 ```
 Teaching video (Telegram / upload)
@@ -72,7 +72,7 @@ Kimi K2.6's extended reasoning handles all four simultaneously in a single pass,
 
 ## Branding & Messaging
 
-**Name**: SpeakAlong  
+**Name**: SayWithMe  
 **Tagline**: *"Watch it. Read it. Speak it."*  
 **Alt tagline**: *"AI phonetics for any language teaching video. Seconds, not minutes."*  
 **Audience**: Language teachers (any language), heritage educators, polyglot content creators, particularly those teaching tonal or diacritical languages  
@@ -135,7 +135,7 @@ Kimi K2.6's extended reasoning handles all four simultaneously in a single pass,
 
 **Shot**: Side-by-side: raw video (no captions) vs. captioned output (Vietnamese + phonetics).  
 **Title card**:
-> *"SpeakAlong — a Hermes plugin.*  
+> *"SayWithMe — a Hermes plugin.*
 > *Watch it. Read it. Speak it."*
 
 **Show**: `hermes plugins enable phonetic-captions` in terminal.  
@@ -151,13 +151,13 @@ Kimi K2.6's extended reasoning handles all four simultaneously in a single pass,
 
 **Full version (~270 chars, fits in 280 with link):**
 ```
-🎬 Built SpeakAlong for @NousResearch × Kimi
+🎬 Built SayWithMe for @NousResearch × Kimi
 
-Vietnamese Shorts mix EN + VI. Auto-captions miss pronunciation guides.
-Kimi K2.6 classifies, fixes diacritics, adds [phonetic guides].
+Language teachers spend 30 min adding pronunciation captions per video.
+Kimi K2.6 classifies language, fixes diacritics, generates [guides].
 FFmpeg burns them in.
 
-Send a clip. Learners speak along.
+Send a clip. Say it with me.
 
 [link] #NousHackathon #KimiTrack
 ```
@@ -165,13 +165,13 @@ Send a clip. Learners speak along.
 **Ultra-short (~120 chars, add link + hashtags after):**
 ```
 Language teachers spend 30 min adding pronunciation captions per video.
-Kimi K2.6 does it in seconds. Built SpeakAlong to prove it.
+Kimi K2.6 does it in seconds. Built SayWithMe to prove it.
 ```
 
 ### Discord (shorter, for `#creative-hackathon-submissions`)
 
 ```
-**SpeakAlong** — AI phonetic captions for language teaching videos (any language)
+**SayWithMe** — AI phonetic captions for language teaching videos (any language)
 
 Built on Hermes + Kimi K2.6. Send a video via Telegram → Kimi auto-detects language,
 fixes transcription artifacts (tones, diacritics), generates pronunciation guides
