@@ -66,7 +66,7 @@ Phonetic generation is the hardest part of this pipeline. It requires:
 
 Kimi K2.6's extended reasoning handles all four simultaneously in a single pass, across every supported language. The model's instruction-following and structured output reliability made it the clear choice — smaller models frequently hallucinate IPA symbols, skip diacritics, or misclassify code-switched segments.
 
-**Proof of Kimi usage**: The health banner in the dashboard shows `"Phonetics engine: NVIDIA Kimi K2.6"` when `NVIDIA_API_KEY` is set. The API call is visible in `~/.hermes/logs/agent.log` with `model: meta/llama-...` / `base_url: https://integrate.api.nvidia.com`. (See demo video.)
+**Proof of Kimi usage**: The health banner in the dashboard shows `"Phonetics engine: NVIDIA Kimi K2.6"` when `NVIDIA_API_KEY` is set. The call is visible in `~/.hermes/logs/agent.log` as `Phonetics generated via NVIDIA Kimi K2.6` (logged by `pipeline.py` after a successful `moonshotai/kimi-k2.6` call to `https://integrate.api.nvidia.com/v1`). (See demo video.)
 
 ---
 
@@ -203,13 +203,13 @@ Hermes plugin — no core file changes.
 
 ## Future Direction
 
-SpeakAlong is scoped to bilingual teaching videos for the hackathon, but the pipeline is already general. The natural growth path:
+SayWithMe is scoped to bilingual teaching videos for the hackathon, but the pipeline is already general. The natural growth path:
 
 **v2 — Monolingual captions (trivial)**  
 Whisper already transcribes any single-language video. Adding a "captions only, no phonetics" mode is a prompt removal and an additional ASS style — no architecture change. This makes the tool useful for any content creator, not just language educators.
 
 **v3 — Translation subtitles**  
-Replace the phonetics-generation prompt with a translation prompt. A monolingual Korean video could get English subtitles burned in; a Spanish teaching video could get French captions. Mechanically identical to the current pipeline — the LLM call is already there, just with a different instruction. This is deliberately deferred: it enters competitive territory with CapCut auto-translate, Descript, and YouTube auto-captions, and the positioning argument for SpeakAlong is strongest in the niche where those tools fail.
+Replace the phonetics-generation prompt with a translation prompt. A monolingual Korean video could get English subtitles burned in; a Spanish teaching video could get French captions. Mechanically identical to the current pipeline — the LLM call is already there, just with a different instruction. This is deliberately deferred: it enters competitive territory with CapCut auto-translate, Descript, and YouTube auto-captions, and the positioning argument for SayWithMe is strongest in the niche where those tools fail.
 
 **v4 — Phonetic direction reversal**  
 Currently the phonetic guide is always in English (the instructor's language). The inverse — generating phonetic guides in the *target* language for English words — is equally useful for language learners going the other direction (e.g., a Vietnamese learner watching an English teaching channel). Same pipeline, different prompt.
