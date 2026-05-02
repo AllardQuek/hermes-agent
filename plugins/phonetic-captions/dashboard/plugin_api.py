@@ -551,6 +551,8 @@ async def nl_edit_segments(job_id: str, payload: NLEditPayload):
     """Apply a natural-language instruction to segments and return proposed patches."""
     data = _load_caption_job(job_id)
     segments = data.get("segments", [])
+    job_target_lang = data.get("target_lang", "vi")
+    job_target_lang_name = _get_pipeline()._lang_name(job_target_lang)
 
     # Build a compact segment representation for the prompt.
     # Prepend "num" (1-indexed display number) so the AI can reliably map
