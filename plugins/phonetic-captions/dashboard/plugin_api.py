@@ -609,20 +609,21 @@ async def nl_edit_segments(job_id: str, payload: NLEditPayload):
 # QA review — flag segment issues
 # ---------------------------------------------------------------------------
 
-_QA_SYSTEM_PROMPT = """You are a quality reviewer for bilingual EN/VI caption segments.
+def _qa_system_prompt(target_lang_code: str, target_lang_name: str) -> str:
+    return f"""You are a quality reviewer for bilingual EN/{target_lang_code.upper()} caption segments.
 Review the provided segments and return ONLY a JSON array of flags — no prose, no markdown fences.
 
 Each segment has a "num" field (1-based display number) and an "id" field (0-based internal id).
 Use the "id" value as "segment_id" in every flag you emit.
 
 Each flag must have a "type" field — either "issue" or "praise":
-  Issue:  {"segment_id":<int>, "type":"issue",  "issue":"<one-line description>", "suggestion":"<one-line fix>"}
-  Praise: {"segment_id":<int>, "type":"praise", "issue":"<one-line note on what is correct>", "suggestion":""}
+  Issue:  {{"segment_id":<int>, "type":"issue",  "issue":"<one-line description>", "suggestion":"<one-line fix>"}}
+  Praise: {{"segment_id":<int>, "type":"praise", "issue":"<one-line note on what is correct>", "suggestion":""}}
 
 Check for issues:
-1. Wrong language classification (e.g. Vietnamese text labelled "en" or vice versa)
-2. Mangled Vietnamese diacritics (Whisper artifacts: missing tones, malformed characters)
-3. Phonetic guide that does not phonetically match the Vietnamese text, or that uses IPA symbols
+1. Wrong language classification (e.g. {target_lang_name} text labelled "en" or vice versa)
+2. Mangled {target_lang_name} diacritics (Whisper artifacts: missing tones, malformed characters)
+3. Phonetic guide that does not phonetically match the {target_lang_name} text, or that uses IPA symbols
    (ɓ ɔ ŋ ʔ ː ˨ ˩ ˧ ˥ etc.) — guides must use only plain English letters/hyphens/brackets
 4. Very short duration (<0.3 s) — likely a stray word that should be merged
 5. Very long duration (>8 s) — likely should be split
