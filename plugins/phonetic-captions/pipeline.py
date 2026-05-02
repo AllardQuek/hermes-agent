@@ -647,6 +647,8 @@ def _handle_caption(args: dict, **kw: Any) -> str:
 
     if not video_path and operation not in ("build_ass",):
         return json.dumps({"error": "video_path is required"})
+    if video_path and os.path.isdir(video_path):
+        return json.dumps({"error": f"video_path is a directory, not a video file: {video_path}. Please provide the full path to a specific file."})
     if video_path and not os.path.exists(video_path):
         return json.dumps({"error": f"Video file not found: {video_path}"})
 
