@@ -47,7 +47,8 @@ Acknowledge and proceed immediately — no unnecessary questions.
 ```json
 {
   "operation": "caption",
-  "video_path": "/path/to/video.mp4"
+  "video_path": "/path/to/video.mp4",
+  "target_lang": "vi"
 }
 ```
 
@@ -83,6 +84,7 @@ Then reburn:
 {
   "operation": "reburn",
   "video_path": "/path/to/original.mp4",
+  "target_lang": "vi",
   "segments": [ ...corrected segments... ]
 }
 ```

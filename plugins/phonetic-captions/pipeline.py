@@ -384,17 +384,30 @@ def _phonetics_prompt(segments: list[dict], target_lang: str = "vi") -> str:
     )
 
 
-def _parse_phonetics_response(raw: str, segments: list[dict]) -> list[dict]:
-    """Parse a JSON phonetics response and merge results back into segments."""
+def _parse_phonetics_response(raw: str, segments: list[dict], raise_on_failure: bool = False) -> list[dict]:
+    """Parse a JSON phonetics response and merge results back into segments.
+
+    When *raise_on_failure* is True, raises ValueError instead of returning
+    all-English so the caller can fall through to the next model path.
+    """
     clean = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE)
     try:
         parsed = json.loads(clean)
         kimi_results = parsed.get("segments", []) if isinstance(parsed, dict) else parsed
     except json.JSONDecodeError:
-        logger.warning(
-            "Phonetics response was non-JSON — treating all segments as English.\n"
-            "Raw output:\n%s", raw[:1000]
-        )
+        msg = f"Phonetics response was non-JSON.\nRaw output:\n{raw[:1000]}"
+        logger.warning(msg)
+        if raise_on_failure:
+            raise ValueError(msg)
+        return [{**s, "lang": "en", "phonetic": ""} for s in segments]
+
+    if not kimi_results and segments:
+        # API returned valid JSON but no segments — typically an error envelope
+        # like {"error": "rate_limit_exceeded"} rather than the expected structure.
+        msg = f"Phonetics response contained no segments.\nRaw output:\n{raw[:1000]}"
+        logger.warning(msg)
+        if raise_on_failure:
+            raise ValueError(msg)
         return [{**s, "lang": "en", "phonetic": ""} for s in segments]
 
     result_map = {item["id"]: item for item in kimi_results if isinstance(item, dict)}
@@ -438,6 +451,7 @@ def generate_phonetics(segments: list[dict], api_key: str | None = None, target_
             client = openai.OpenAI(
                 api_key=_api_key,
                 base_url="https://integrate.api.nvidia.com/v1",
+                timeout=60.0,
             )
             response = client.chat.completions.create(
                 model="moonshotai/kimi-k2.6",
@@ -454,7 +468,9 @@ def generate_phonetics(segments: list[dict], api_key: str | None = None, target_
 
             logger.info("Phonetics generated via NVIDIA Kimi K2.6")
             logger.debug("Kimi raw response (first 500 chars): %s", raw[:500])
-            return _parse_phonetics_response(raw, segments)
+            # raise_on_failure=True so a bad/empty Kimi response falls through
+            # to Path B rather than silently returning all-English segments.
+            return _parse_phonetics_response(raw, segments, raise_on_failure=True)
 
         except Exception as e:
             logger.warning("Kimi API call failed: %s — falling back to Hermes model", e)
@@ -491,7 +507,17 @@ def generate_phonetics(segments: list[dict], api_key: str | None = None, target_
             "You are a precise JSON generator. "
             "Return ONLY valid JSON with no markdown, no explanation, no extra text."
         )
-        result = agent.run_conversation(prompt, system_message=system_prompt)
+        # Run in a thread with a hard timeout — no API call should block forever.
+        import concurrent.futures
+        _HERMES_PHONETICS_TIMEOUT = 120  # seconds
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
+            _future = _pool.submit(agent.run_conversation, prompt, system_message=system_prompt)
+            try:
+                result = _future.result(timeout=_HERMES_PHONETICS_TIMEOUT)
+            except concurrent.futures.TimeoutError:
+                raise RuntimeError(
+                    f"Hermes model phonetics call timed out after {_HERMES_PHONETICS_TIMEOUT}s"
+                )
         raw = result.get("final_response", "")
         logger.info("Phonetics generated via Hermes model: %s", model)
         return _parse_phonetics_response(raw, segments)
@@ -500,7 +526,14 @@ def generate_phonetics(segments: list[dict], api_key: str | None = None, target_
         logger.warning(
             "Hermes model phonetics call failed: %s — treating all segments as English", e
         )
-        return [{**s, "lang": "en", "phonetic": ""} for s in segments]
+        # Propagate as a RuntimeError so _handle_caption surfaces it clearly
+        # to the agent (and through it to the user) rather than silently
+        # producing a wrong output that looks correct.
+        raise RuntimeError(
+            f"Phonetics generation failed (both NVIDIA Kimi and Hermes model paths): {e}. "
+            f"Check that NVIDIA_API_KEY is set in ~/.hermes/.env or that the configured "
+            f"model ({e.__class__.__name__}) is reachable."
+        ) from e
 
 
 def build_ass(segments: list[dict], output_path: str | None = None, target_lang: str = "vi") -> str:
@@ -627,6 +660,21 @@ def _handle_caption(args: dict, **kw: Any) -> str:
 
             tgt_count = sum(1 for s in segments if s.get("lang") == target_lang)
             en_count = sum(1 for s in segments if s.get("lang") == "en")
+
+            # Warn clearly when the phonetics step silently degraded to all-English.
+            # This happens when both NVIDIA_API_KEY is missing AND the Hermes model
+            # fallback fails. The video is still created but without bilingual captions.
+            if tgt_count == 0 and segments:
+                lang_warning = (
+                    f"⚠️ Warning: All {len(segments)} segments were classified as English — "
+                    f"no {lang_name} detected. The phonetics generation step may have failed "
+                    f"(check that NVIDIA_API_KEY is set in ~/.hermes/.env, or that the "
+                    f"configured Hermes model is reachable). The video was created with "
+                    f"English-only captions. Review the segments below and correct as needed.\n\n"
+                )
+            else:
+                lang_warning = ""
+
             caption_display = "\n".join(
                 (
                     f"{i+1}. [{lang_name[:2].upper() if s.get('lang') == target_lang else 'EN'}] {s['text']}"
@@ -646,6 +694,7 @@ def _handle_caption(args: dict, **kw: Any) -> str:
                 "target_lang_segments": tgt_count,
                 "en_segments": en_count,
                 "message": (
+                    f"{lang_warning}"
                     f"Done! {len(segments)} segments ({tgt_count} {lang_name}, {en_count} English).\n"
                     f"Output: MEDIA:{out}\n\n"
                     f"Open the caption editor to visually edit text, phonetics, and style:\n"
