@@ -57,19 +57,8 @@ async def health_check():
     except ImportError:
         pass
 
-    nvidia_key = bool(os.environ.get("NVIDIA_API_KEY", ""))
-    if not nvidia_key:
-        # Also check ~/.hermes/.env — key may be set there but not exported
-        try:
-            from hermes_cli.config import get_env_value
-            nvidia_key = bool(get_env_value("NVIDIA_API_KEY"))
-        except Exception:
-            pass
-
-    if nvidia_key:
-        phonetics_source = "nvidia"
-    elif faster_whisper_ok:
-        # Hermes model path is always available when Hermes is running
+    if faster_whisper_ok:
+        # Phonetics always use the configured Hermes model (set via `hermes model`)
         phonetics_source = "hermes"
     else:
         phonetics_source = "unavailable"

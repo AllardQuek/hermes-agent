@@ -13,21 +13,15 @@ The target language is auto-detected from Whisper segment classifications
 
 Pipeline:
   1. faster-whisper transcribes audio (auto language detect, fully local)
-  2. Phonetic generation — two modes:
-       a. With NVIDIA_API_KEY: Kimi K2.6 via NVIDIA NIM (best quality)
-       b. Without key: user's configured Hermes model (automatic fallback)
-     In both modes: classifies each segment as "en" or <target_lang>, corrects
-     diacritics, and generates English phonetic guides.
+  2. Phonetic generation via the user's configured Hermes model (set with
+     `hermes model` — supports NVIDIA NIM, OpenAI, Anthropic, etc.):
+     classifies each segment as "en" or <target_lang>, corrects diacritics,
+     and generates English phonetic guides.
   3. ASS subtitle file built with MAIN + PHONETIC styles
   4. FFmpeg burns captions into the video
 
 Required dependencies:
     pip install faster-whisper
-    pip install openai   # only needed when NVIDIA_API_KEY is set
-
-Optional env var for high-quality phonetics (add to ~/.hermes/.env):
-    NVIDIA_API_KEY=nvapi-...
-    If absent, the user's configured Hermes model is used instead.
 
 FFmpeg must be installed system-wide:
     macOS: brew install ffmpeg
@@ -360,7 +354,7 @@ def transcribe(video_path: str) -> list[dict]:
 
 
 def _phonetics_prompt(segments: list[dict], target_lang: str = "vi") -> str:
-    """Build the prompt used for both NVIDIA and Hermes-model phonetic generation."""
+    """Build the prompt for phonetic generation."""
     lang_name = _lang_name(target_lang)
     input_lines = "\n".join(
         f'{{"id": {s["id"]}, "text": {json.dumps(s["text"])}}}'
@@ -422,77 +416,16 @@ def _parse_phonetics_response(raw: str, segments: list[dict], raise_on_failure: 
     ]
 
 
-def generate_phonetics(segments: list[dict], api_key: str | None = None, target_lang: str = "vi") -> list[dict]:
+def generate_phonetics(segments: list[dict], target_lang: str = "vi") -> list[dict]:
     """Classify, correct, and add phonetics to segments.
 
-    Model selection (in priority order):
-      1. NVIDIA_API_KEY set → kimi-k2-instruct via NVIDIA NIM (best quality)
-      2. kimi-k2-instruct fails → kimi-k2-thinking via NVIDIA NIM
-      3. kimi-k2-thinking fails → kimi-k2.6 via NVIDIA NIM
-      4. All NVIDIA models fail → user's configured Hermes model
-      5. Hermes model fails → raises RuntimeError (surfaced to user)
+    Uses the user's configured Hermes model (set via `hermes model`). This
+    supports any provider Hermes supports — including NVIDIA NIM, OpenAI,
+    Anthropic, local models, etc. Raises RuntimeError on failure.
     """
-    _api_key = api_key or os.getenv("NVIDIA_API_KEY", "")
     prompt = _phonetics_prompt(segments, target_lang)
 
-    # ------------------------------------------------------------------
-    # Path A: NVIDIA NIM — try kimi-k2-thinking first, fall back to kimi-k2.6
-    # ------------------------------------------------------------------
-    if _api_key:
-        try:
-            import openai  # type: ignore
-        except ImportError:
-            logger.warning("openai not installed — falling back to Hermes model for phonetics. Run: pip install openai")
-            _api_key = ""  # fall through to Path B
-
-    _NVIDIA_MODELS = [
-        ("moonshotai/kimi-k2-instruct", "Kimi K2-Instruct"),
-        ("moonshotai/kimi-k2-thinking", "Kimi K2-Thinking"),
-        ("moonshotai/kimi-k2.6",        "Kimi K2.6"),
-    ]
-
-    if _api_key:
-        import openai  # type: ignore  # ImportError check done above
-
-        client = openai.OpenAI(
-            api_key=_api_key,
-            base_url="https://integrate.api.nvidia.com/v1",
-            timeout=60.0,
-        )
-
-        for _model_id, _model_label in _NVIDIA_MODELS:
-            try:
-                response = client.chat.completions.create(
-                    model=_model_id,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.2,
-                    max_tokens=2048,
-                    response_format={"type": "json_object"},
-                )
-                choice = response.choices[0]
-                raw = getattr(choice.message, "content", None) or ""
-                # Kimi NVIDIA NIM quirk: output sometimes in reasoning_content
-                if not raw.strip():
-                    raw = getattr(choice.message, "reasoning_content", None) or ""
-
-                logger.info("Phonetics generated via NVIDIA %s", _model_label)
-                logger.debug("Kimi raw response (first 500 chars): %s", raw[:500])
-                # raise_on_failure=True so a bad/empty response falls through
-                # to the next model rather than silently returning all-English.
-                return _parse_phonetics_response(raw, segments, raise_on_failure=True)
-
-            except Exception as e:
-                logger.warning(
-                    "NVIDIA %s call failed: %s — trying next model", _model_label, e
-                )
-                # Continue to next model in the list
-
-    # ------------------------------------------------------------------
-    # Path B: Hermes-configured model (fallback)
-    # ------------------------------------------------------------------
-    logger.info(
-        "NVIDIA_API_KEY not set (or call failed) — using configured Hermes model for phonetics"
-    )
+    logger.info("Using configured Hermes model for phonetics")
     try:
         from hermes_cli.config import load_config
         from hermes_cli.runtime_provider import resolve_runtime_provider
@@ -541,9 +474,8 @@ def generate_phonetics(segments: list[dict], api_key: str | None = None, target_
         # to the agent (and through it to the user) rather than silently
         # producing a wrong output that looks correct.
         raise RuntimeError(
-            f"Phonetics generation failed (both NVIDIA Kimi and Hermes model paths): {e}. "
-            f"Check that NVIDIA_API_KEY is set in ~/.hermes/.env or that the configured "
-            f"model ({e.__class__.__name__}) is reachable."
+            f"Phonetics generation failed: {e}. "
+            f"Check that the configured Hermes model is reachable (run `hermes model` to update)."
         ) from e
 
 
@@ -681,9 +613,9 @@ def _handle_caption(args: dict, **kw: Any) -> str:
                 lang_warning = (
                     f"⚠️ Warning: All {len(segments)} segments were classified as English — "
                     f"no {lang_name} detected. The phonetics generation step may have failed "
-                    f"(check that NVIDIA_API_KEY is set in ~/.hermes/.env, or that the "
-                    f"configured Hermes model is reachable). The video was created with "
-                    f"English-only captions. Review the segments below and correct as needed.\n\n"
+                    f"(check that the configured Hermes model is reachable via `hermes model`). "
+                    f"The video was created with English-only captions. "
+                    f"Review the segments below and correct as needed.\n\n"
                 )
             else:
                 lang_warning = ""

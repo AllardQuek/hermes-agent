@@ -9,11 +9,9 @@ kind: standalone
 
 pip_dependencies:
   - faster-whisper   # local Whisper transcription (required)
-  - openai           # NVIDIA NIM client (only needed when NVIDIA_API_KEY is set)
 
 provides_tools:
   - video-caption
 
-# Note: NVIDIA_API_KEY is optional — phonetics fall back to the user's
-# configured Hermes model when the key is absent. ffmpeg must be installed
-# system-wide (brew install ffmpeg / apt install ffmpeg).
+# ffmpeg must be installed system-wide (brew install ffmpeg / apt install ffmpeg).
+# Phonetics use the user's configured Hermes model (set via `hermes model`).
