@@ -425,18 +425,17 @@ def _parse_phonetics_response(raw: str, segments: list[dict], raise_on_failure: 
 def generate_phonetics(segments: list[dict], api_key: str | None = None, target_lang: str = "vi") -> list[dict]:
     """Classify, correct, and add phonetics to segments.
 
-    Mode selection (in priority order):
-      1. NVIDIA_API_KEY set → Kimi K2.6 via NVIDIA NIM (best quality)
-      2. No NVIDIA key      → user's configured Hermes model (automatic fallback)
-      3. Hermes model call fails → all segments treated as English (silent degradation)
-
-    Falls back to all-English (no phonetics) only when both model paths are unavailable.
+    Model selection (in priority order):
+      1. NVIDIA_API_KEY set → kimi-k2-thinking via NVIDIA NIM (best quality)
+      2. kimi-k2-thinking unavailable/quota → kimi-k2.6 via NVIDIA NIM (fallback)
+      3. Both NVIDIA models fail → user's configured Hermes model
+      4. Hermes model fails → raises RuntimeError (surfaced to user)
     """
     _api_key = api_key or os.getenv("NVIDIA_API_KEY", "")
     prompt = _phonetics_prompt(segments, target_lang)
 
     # ------------------------------------------------------------------
-    # Path A: NVIDIA NIM (Kimi K2.6)
+    # Path A: NVIDIA NIM — try kimi-k2-thinking first, fall back to kimi-k2.6
     # ------------------------------------------------------------------
     if _api_key:
         try:
@@ -445,36 +444,46 @@ def generate_phonetics(segments: list[dict], api_key: str | None = None, target_
             logger.warning("openai not installed — falling back to Hermes model for phonetics. Run: pip install openai")
             _api_key = ""  # fall through to Path B
 
+    _NVIDIA_MODELS = [
+        ("moonshotai/kimi-k2-thinking", "Kimi K2-Thinking"),
+        ("moonshotai/kimi-k2.6",        "Kimi K2.6"),
+    ]
+
     if _api_key:
-        try:
-            import openai  # type: ignore
-            client = openai.OpenAI(
-                api_key=_api_key,
-                base_url="https://integrate.api.nvidia.com/v1",
-                timeout=60.0,
-            )
-            response = client.chat.completions.create(
-                model="moonshotai/kimi-k2.6",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_tokens=2048,
-                response_format={"type": "json_object"},
-            )
-            choice = response.choices[0]
-            raw = getattr(choice.message, "content", None) or ""
-            # Kimi NVIDIA NIM quirk: output sometimes in reasoning_content
-            if not raw.strip():
-                raw = getattr(choice.message, "reasoning_content", None) or ""
+        import openai  # type: ignore  # ImportError check done above
 
-            logger.info("Phonetics generated via NVIDIA Kimi K2.6")
-            logger.debug("Kimi raw response (first 500 chars): %s", raw[:500])
-            # raise_on_failure=True so a bad/empty Kimi response falls through
-            # to Path B rather than silently returning all-English segments.
-            return _parse_phonetics_response(raw, segments, raise_on_failure=True)
+        client = openai.OpenAI(
+            api_key=_api_key,
+            base_url="https://integrate.api.nvidia.com/v1",
+            timeout=60.0,
+        )
 
-        except Exception as e:
-            logger.warning("Kimi API call failed: %s — falling back to Hermes model", e)
-            # Fall through to Path B
+        for _model_id, _model_label in _NVIDIA_MODELS:
+            try:
+                response = client.chat.completions.create(
+                    model=_model_id,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2,
+                    max_tokens=2048,
+                    response_format={"type": "json_object"},
+                )
+                choice = response.choices[0]
+                raw = getattr(choice.message, "content", None) or ""
+                # Kimi NVIDIA NIM quirk: output sometimes in reasoning_content
+                if not raw.strip():
+                    raw = getattr(choice.message, "reasoning_content", None) or ""
+
+                logger.info("Phonetics generated via NVIDIA %s", _model_label)
+                logger.debug("Kimi raw response (first 500 chars): %s", raw[:500])
+                # raise_on_failure=True so a bad/empty response falls through
+                # to the next model rather than silently returning all-English.
+                return _parse_phonetics_response(raw, segments, raise_on_failure=True)
+
+            except Exception as e:
+                logger.warning(
+                    "NVIDIA %s call failed: %s — trying next model", _model_label, e
+                )
+                # Continue to next model in the list
 
     # ------------------------------------------------------------------
     # Path B: Hermes-configured model (fallback)
