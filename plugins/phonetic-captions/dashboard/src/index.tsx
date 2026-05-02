@@ -427,7 +427,14 @@ function JobListView({ onSelect }: { onSelect: (id: string) => void }) {
                   }`}
                 >
                   <div className="min-w-0">
-                    <div className="font-medium text-sm truncate text-foreground">{job.video_filename || job.id}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="font-medium text-sm truncate text-foreground">{job.video_filename || job.id}</div>
+                      {job.target_lang && job.target_lang !== "auto" && (
+                        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                          {SUPPORTED_LANGS.find((l) => l.code === job.target_lang)?.label ?? job.target_lang.toUpperCase()}
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
                       <span>
                         {job.segment_count} segment{job.segment_count !== 1 ? "s" : ""}
