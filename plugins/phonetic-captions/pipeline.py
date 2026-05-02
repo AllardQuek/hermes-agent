@@ -426,10 +426,11 @@ def generate_phonetics(segments: list[dict], api_key: str | None = None, target_
     """Classify, correct, and add phonetics to segments.
 
     Model selection (in priority order):
-      1. NVIDIA_API_KEY set → kimi-k2-thinking via NVIDIA NIM (best quality)
-      2. kimi-k2-thinking unavailable/quota → kimi-k2.6 via NVIDIA NIM (fallback)
-      3. Both NVIDIA models fail → user's configured Hermes model
-      4. Hermes model fails → raises RuntimeError (surfaced to user)
+      1. NVIDIA_API_KEY set → kimi-k2-instruct via NVIDIA NIM (best quality)
+      2. kimi-k2-instruct fails → kimi-k2-thinking via NVIDIA NIM
+      3. kimi-k2-thinking fails → kimi-k2.6 via NVIDIA NIM
+      4. All NVIDIA models fail → user's configured Hermes model
+      5. Hermes model fails → raises RuntimeError (surfaced to user)
     """
     _api_key = api_key or os.getenv("NVIDIA_API_KEY", "")
     prompt = _phonetics_prompt(segments, target_lang)
@@ -445,6 +446,7 @@ def generate_phonetics(segments: list[dict], api_key: str | None = None, target_
             _api_key = ""  # fall through to Path B
 
     _NVIDIA_MODELS = [
+        ("moonshotai/kimi-k2-instruct", "Kimi K2-Instruct"),
         ("moonshotai/kimi-k2-thinking", "Kimi K2-Thinking"),
         ("moonshotai/kimi-k2.6",        "Kimi K2.6"),
     ]
